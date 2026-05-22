@@ -217,6 +217,18 @@ h3 {
   font-size: 0.9rem;
 }
 
+.status-strip .build-pill,
+.build-note {
+  color: color-mix(in srgb, var(--muted) 78%, white);
+  font-size: 0.74rem;
+  font-weight: 720;
+  letter-spacing: 0;
+}
+
+.build-note {
+  margin: 16px 0 0;
+}
+
 .summary-stats strong {
   color: var(--ink);
 }

@@ -9,9 +9,10 @@ export default async function Home({ searchParams }: HomeProps) {
   const session = await getSessionFromCookies();
   const params = searchParams ? await searchParams : {};
   const loginStatus = Array.isArray(params.login) ? params.login[0] : params.login;
+  const buildLabel = getBuildLabel();
 
   if (!session) {
-    return <LoginScreen loginStatus={loginStatus} />;
+    return <LoginScreen loginStatus={loginStatus} buildLabel={buildLabel} />;
   }
 
   const selectedName = getProfileLabel(session.profileId);
@@ -39,6 +40,7 @@ export default async function Home({ searchParams }: HomeProps) {
               <span id="saved-sessions">0 saved sessions</span>
               <span id="saved-feedback">0 feedback logs</span>
               <span id="saved-bans">0 banned exercises</span>
+              <span className="build-pill">{buildLabel}</span>
             </div>
           </div>
         </header>
@@ -269,7 +271,7 @@ export default async function Home({ searchParams }: HomeProps) {
   );
 }
 
-function LoginScreen({ loginStatus }: { loginStatus?: string }) {
+function LoginScreen({ loginStatus, buildLabel }: { loginStatus?: string; buildLabel: string }) {
   const passwordConfigured = isPasswordConfigured();
   const errorMessage =
     loginStatus === "failed"
@@ -306,7 +308,13 @@ function LoginScreen({ loginStatus }: { loginStatus?: string }) {
             Open RemiTrainer
           </button>
         </form>
+        <p className="build-note">{buildLabel}</p>
       </section>
     </main>
   );
+}
+
+function getBuildLabel() {
+  const shortSha = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7);
+  return shortSha ? `Build ${shortSha}` : "Build local";
 }
