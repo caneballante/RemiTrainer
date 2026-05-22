@@ -1,20 +1,53 @@
 # RemiTrainer
 
-A dependency-free prototype of a household workout generator.
+A household workout generator that keeps shared workouts aligned while adapting
+each person's exercises, intensity, equipment, and limitations.
 
-The app models one household with multiple profiles, shared workout sessions,
-individual user workout instances, equipment constraints, feedback logging,
-banned exercises, and instruction assets. It uses localStorage as the temporary
-catalog so generated workouts and exercise feedback are remembered between page
-loads.
+The browser app still has a local fallback generator, but this repo is now a
+Next.js app with server routes ready for Neon Postgres and OpenAI.
 
-Open `index.html` directly or serve the folder locally. The generator is local
-and rule-based for now, but the UI and saved records are shaped around a future
-strict-JSON AI response:
+## Local setup
 
-- parent shared workout plan
-- user-specific adapted workout instances
-- movement-pattern alignment
-- equipment-aware substitutions
-- injury and banned-exercise avoidance
-- compact context summaries instead of raw full history
+```bash
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+## Environment variables
+
+Copy `.env.example` to `.env.local` and fill in:
+
+```bash
+DATABASE_URL="postgres://USER:PASSWORD@HOST.neon.tech/remitrainer?sslmode=require"
+OPENAI_API_KEY="sk-proj-..."
+OPENAI_MODEL="gpt-5.1"
+```
+
+Do not commit `.env.local`.
+
+## Neon setup
+
+Create a Neon database, then run `db/schema.sql` in the Neon SQL editor. The
+schema includes:
+
+- `household`
+- `profiles`
+- `household_equipment`
+- `profile_limitations`
+- `profile_banned_exercises`
+- `shared_workout_sessions`
+- `user_workout_instances`
+- `workout_exercise_instances`
+- `exercise_feedback`
+- `exercise_instruction_assets`
+
+## Server routes
+
+- `GET /api/health` checks whether `DATABASE_URL` and `OPENAI_API_KEY` are configured.
+- `POST /api/workouts/generate` requests strict JSON from OpenAI, saves the generated
+  workout to Neon when `DATABASE_URL` is configured, and returns the validated workout.
+
+If the API route is unavailable or missing secrets, the browser falls back to the
+local generator so the app remains usable.
