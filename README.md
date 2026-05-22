@@ -23,9 +23,16 @@ Copy `.env.example` to `.env.local` and fill in:
 DATABASE_URL="postgres://USER:PASSWORD@HOST.neon.tech/remitrainer?sslmode=require"
 OPENAI_API_KEY="sk-proj-..."
 OPENAI_MODEL="gpt-5.1"
+REMITRAINER_PASSWORD="choose-a-shared-household-password"
+REMITRAINER_SESSION_SECRET="optional-long-random-cookie-signing-secret"
 ```
 
 Do not commit `.env.local`.
+
+`REMITRAINER_PASSWORD` is a lightweight household gate for Jon and Jeanne. It
+sets an HTTP-only cookie after login and protects the OpenAI workout generation
+route from anonymous calls. `REMITRAINER_SESSION_SECRET` is optional; if omitted,
+the password is also used to sign the cookie.
 
 ## Neon setup
 

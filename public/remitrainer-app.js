@@ -75,6 +75,94 @@ const feedbackLabels = {
   ban: "ban this exercise",
 };
 
+const profileGuideQuestions = [
+  {
+    field: "age",
+    title: "Age",
+    prompt: "How old are you?",
+    type: "number",
+    min: 1,
+  },
+  {
+    field: "sex",
+    title: "Sex",
+    prompt: "Which option should RemiTrainer use for exercise context?",
+    type: "select",
+    options: [
+      ["female", "Female"],
+      ["male", "Male"],
+      ["nonbinary", "Nonbinary"],
+      ["not-specified", "Prefer not to say"],
+    ],
+  },
+  {
+    field: "weight",
+    title: "Weight",
+    prompt: "What weight should be saved on the profile?",
+    type: "number",
+    min: 1,
+  },
+  {
+    field: "fitness_level",
+    title: "Fitness level",
+    prompt: "What level feels true most days?",
+    type: "select",
+    options: [
+      ["beginner", "Beginner"],
+      ["intermediate", "Intermediate"],
+      ["advanced", "Advanced"],
+    ],
+  },
+  {
+    field: "goals",
+    title: "Goals",
+    prompt: "What should workouts help you move toward?",
+    type: "textarea",
+    placeholder: "Build consistency, improve strength, protect knees...",
+  },
+  {
+    field: "preferred_workout_style",
+    title: "Workout style",
+    prompt: "What kind of workout experience do you prefer?",
+    type: "select",
+    options: [
+      ["Supportive, simple, and sustainable", "Supportive and simple"],
+      ["Efficient strength work with clear progressions", "Efficient strength"],
+      ["Mobility-first with calm strength work", "Mobility-first"],
+      ["Conditioning-focused but not punishing", "Conditioning-focused"],
+      ["A balanced mix that changes with recovery", "Balanced and adaptive"],
+    ],
+  },
+  {
+    field: "preferred_mix",
+    title: "Training mix",
+    prompt: "What should RemiTrainer emphasize? Pick what feels useful.",
+    type: "mix",
+    options: ["Strength", "Mobility", "PT/recovery", "Stretching", "Cardio"],
+  },
+  {
+    field: "injuries_or_limitations",
+    title: "Limitations",
+    prompt: "Any injuries, tender spots, or movements that need caution?",
+    type: "textarea",
+    placeholder: "Knee pain, wrist pain, low back tightness...",
+  },
+  {
+    field: "exercises_to_avoid",
+    title: "Avoid for now",
+    prompt: "Any exercises you dislike or want RemiTrainer to avoid unless necessary?",
+    type: "textarea",
+    placeholder: "Burpees, jumping lunges...",
+  },
+  {
+    field: "permanently_banned_exercises",
+    title: "Never suggest",
+    prompt: "Any exercises that should be permanently banned for you?",
+    type: "textarea",
+    placeholder: "Exact exercise names, separated by commas",
+  },
+];
+
 const dataModelSchema = {
   household: ["id", "name", "created_at", "updated_at"],
   profiles: [
@@ -656,6 +744,12 @@ const exerciseLibrary = [
 ];
 
 const controls = {
+  appShell: document.querySelector(".app-shell"),
+  activeProfile: document.querySelector("#active-profile"),
+  householdJoin: document.querySelector("#household-join"),
+  joinProfileName: document.querySelector("#join-profile-name"),
+  appTabs: [...document.querySelectorAll("[data-app-tab]")],
+  sectionPanels: [...document.querySelectorAll("[data-section-panel]")],
   form: document.querySelector("#workout-form"),
   customCount: document.querySelector("#custom-count"),
   radios: [...document.querySelectorAll("input[name='exerciseCount']")],
@@ -675,10 +769,15 @@ const controls = {
   instructionDialog: document.querySelector("#instruction-dialog"),
   instructionDetail: document.querySelector("#instruction-detail"),
   closeDialog: document.querySelector("#close-dialog"),
+  profileGuideDialog: document.querySelector("#profile-guide-dialog"),
+  profileGuideContent: document.querySelector("#profile-guide-content"),
 };
 
 let state = loadState();
 let currentDataTab = "context";
+let currentAppTab = "workout";
+let activeProfileId = controls.activeProfile?.value || controls.appShell?.dataset.selectedProfile || "jeanne";
+let profileGuide = null;
 let activeSessionId = state.shared_workout_sessions.at(-1)?.id || null;
 let lastStrictJson = activeSessionId ? getSession(activeSessionId)?.original_ai_response || null : null;
 
@@ -686,12 +785,20 @@ renderApp();
 bindEvents();
 
 function bindEvents() {
+  controls.appTabs.forEach((button) => {
+    button.addEventListener("click", () => {
+      setActiveAppTab(button.dataset.appTab);
+    });
+  });
+
   controls.form.addEventListener("submit", async (event) => {
     event.preventDefault();
     await spinUpWorkout();
   });
 
   controls.form.addEventListener("input", updateRequestSummary);
+
+  controls.householdJoin.addEventListener("change", updateRequestSummary);
 
   controls.radios.forEach((radio) => {
     radio.addEventListener("change", () => {
@@ -720,6 +827,12 @@ function bindEvents() {
     saveState();
     renderMemory();
     renderDataView();
+  });
+
+  controls.profiles.addEventListener("click", (event) => {
+    const guideButton = event.target.closest("[data-profile-action='guide']");
+    if (!guideButton) return;
+    openProfileGuide(guideButton.closest("[data-profile-id]")?.dataset.profileId);
   });
 
   controls.equipmentList.addEventListener("change", (event) => {
@@ -757,6 +870,22 @@ function bindEvents() {
     controls.instructionDialog.close();
   });
 
+  controls.profileGuideDialog.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-guide-action]")?.dataset.guideAction;
+    if (!action) return;
+    handleProfileGuideAction(action);
+  });
+
+  controls.profileGuideContent.addEventListener("input", (event) => {
+    const input = event.target.closest("[data-guide-input], [data-guide-mix]");
+    if (!input || !profileGuide) return;
+    updateProfileGuideDraft(input);
+  });
+
+  controls.profileGuideDialog.addEventListener("close", () => {
+    if (!controls.profileGuideDialog.open) profileGuide = null;
+  });
+
   controls.resetDemo.addEventListener("click", () => {
     state = createDefaultState();
     activeSessionId = null;
@@ -767,6 +896,8 @@ function bindEvents() {
 }
 
 function renderApp() {
+  syncActiveProfile();
+  setActiveAppTab(currentAppTab, false);
   renderProfiles();
   renderEquipment();
   renderMemory();
@@ -775,11 +906,40 @@ function renderApp() {
   renderDataView();
 }
 
+function syncActiveProfile() {
+  if (!state.profiles.some((profile) => profile.id === activeProfileId)) {
+    activeProfileId = state.profiles[0]?.id || "jeanne";
+  }
+
+  const activeProfile = getActiveProfile();
+  const otherProfile = getOtherProfile();
+  document.querySelector("#active-profile-name").textContent = activeProfile?.name || "Household member";
+  controls.joinProfileName.textContent = otherProfile?.name || "Other person";
+  controls.participants.value = controls.householdJoin.checked ? "all" : activeProfileId;
+}
+
+function setActiveAppTab(tabName, scrollToTop = true) {
+  currentAppTab = tabName || "workout";
+  controls.appShell.classList.add("tabs-ready");
+  controls.appTabs.forEach((button) => {
+    button.classList.toggle("active", button.dataset.appTab === currentAppTab);
+  });
+  controls.sectionPanels.forEach((panel) => {
+    panel.classList.toggle("is-active-tab", panel.dataset.sectionPanel === currentAppTab);
+  });
+
+  if (scrollToTop && window.matchMedia("(max-width: 720px)").matches) {
+    controls.appShell.scrollIntoView({ block: "start" });
+  }
+}
+
 function updateRequestSummary() {
   const request = getRequest();
   const participantCount = getParticipants(request).length;
+  controls.participants.value = request.participant_mode;
   document.querySelector("#exercise-count").textContent = request.count;
   document.querySelector("#participant-count").textContent = participantCount;
+  document.querySelector("#participant-label").textContent = participantCount === 1 ? "person" : "people";
 }
 
 async function spinUpWorkout() {
@@ -873,7 +1033,7 @@ function getRequest() {
     requested_focus: requestedFocus,
     focus,
     preferred_style: controls.style.value,
-    participant_mode: controls.participants.value,
+    participant_mode: controls.householdJoin.checked ? "all" : activeProfileId,
     include_warmup: controls.warmup.checked,
     include_cooldown: controls.cooldown.checked,
     requested_at: nowIso(),
@@ -1128,7 +1288,10 @@ function saveGeneratedWorkout(request, compactContext, originalAiResponse, final
 }
 
 function renderProfiles() {
-  controls.profiles.innerHTML = state.profiles.map((profile) => renderProfileCard(profile)).join("");
+  const activeProfile = getActiveProfile();
+  controls.profiles.innerHTML = activeProfile
+    ? renderProfileCard(activeProfile)
+    : `<p class="empty-state">No profile found for this login.</p>`;
 }
 
 function renderProfileCard(profile) {
@@ -1140,7 +1303,7 @@ function renderProfileCard(profile) {
           <h3>${escapeHtml(profile.name)}</h3>
           <p>${escapeHtml(profile.fitness_level)} - ${banCount} banned</p>
         </div>
-        <span class="tag">${escapeHtml(profile.id)}</span>
+        <button class="ghost-action" type="button" data-profile-action="guide">Guided update</button>
       </header>
       <div class="mini-grid">
         <label>
@@ -1180,7 +1343,7 @@ function renderProfileCard(profile) {
         <textarea data-profile-field="preferred_workout_style">${escapeHtml(profile.preferred_workout_style)}</textarea>
       </label>
       <label>
-        <span>Preferred mix: strength, mobility, PT, stretching, cardio</span>
+        <span>Preferred mix</span>
         <textarea data-profile-field="preferred_mix">${escapeHtml(profile.preferred_mix)}</textarea>
       </label>
       <label>
@@ -1197,6 +1360,167 @@ function renderProfileCard(profile) {
       </label>
     </article>
   `;
+}
+
+function openProfileGuide(profileId) {
+  const profile = state.profiles.find((item) => item.id === profileId);
+  if (!profile) return;
+
+  profileGuide = {
+    profileId,
+    step: 0,
+    draft: { ...profile },
+  };
+  renderProfileGuideStep();
+  controls.profileGuideDialog.showModal();
+}
+
+function renderProfileGuideStep() {
+  if (!profileGuide) return;
+
+  const profile = state.profiles.find((item) => item.id === profileGuide.profileId);
+  const question = profileGuideQuestions[profileGuide.step];
+  const isLastStep = profileGuide.step === profileGuideQuestions.length - 1;
+  const progress = `${profileGuide.step + 1} of ${profileGuideQuestions.length}`;
+
+  controls.profileGuideContent.innerHTML = `
+    <div class="profile-guide">
+      <div class="guide-header">
+        <div>
+          <p class="eyebrow">Profile guide</p>
+          <h2>${escapeHtml(profile.name)} profile</h2>
+        </div>
+        <button class="dialog-close inline-close" type="button" data-guide-action="close" aria-label="Close profile guide">Close</button>
+      </div>
+      <div class="guide-progress" aria-label="Profile guide progress">
+        <span>${escapeHtml(progress)}</span>
+        <div><i style="width: ${Math.round(((profileGuide.step + 1) / profileGuideQuestions.length) * 100)}%"></i></div>
+      </div>
+      <section class="guide-step">
+        <p class="eyebrow">${escapeHtml(question.title)}</p>
+        <h3>${escapeHtml(question.prompt)}</h3>
+        ${renderProfileGuideInput(question, profileGuide.draft[question.field])}
+      </section>
+      <div class="guide-actions">
+        <button class="ghost-action" type="button" data-guide-action="back" ${profileGuide.step === 0 ? "disabled" : ""}>Back</button>
+        <button class="primary-action" type="button" data-guide-action="${isLastStep ? "save" : "next"}">
+          ${isLastStep ? "Save profile" : "Next"}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderProfileGuideInput(question, value) {
+  if (question.type === "select") {
+    return `
+      <select class="guide-input" data-guide-input>
+        ${question.options.map(([optionValue, label]) => option(optionValue, label, value)).join("")}
+      </select>
+    `;
+  }
+
+  if (question.type === "textarea") {
+    return `
+      <textarea
+        class="guide-input guide-textarea"
+        data-guide-input
+        placeholder="${escapeHtml(question.placeholder || "")}"
+      >${escapeHtml(value)}</textarea>
+    `;
+  }
+
+  if (question.type === "mix") {
+    const selected = selectedMixOptions(value);
+    return `
+      <div class="choice-grid">
+        ${question.options
+          .map(
+            (item) => `
+              <label class="choice-pill">
+                <input data-guide-mix type="checkbox" value="${escapeHtml(item)}" ${selected.includes(item) ? "checked" : ""} />
+                <span>${escapeHtml(item)}</span>
+              </label>
+            `,
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
+  return `
+    <input
+      class="guide-input"
+      data-guide-input
+      type="number"
+      min="${question.min || 0}"
+      value="${escapeHtml(value)}"
+    />
+  `;
+}
+
+function selectedMixOptions(value) {
+  const normalized = normalize(value);
+  return profileGuideQuestions
+    .find((question) => question.type === "mix")
+    .options.filter((optionText) => normalized.includes(normalize(optionText).split(" ")[0]));
+}
+
+function updateProfileGuideDraft(input) {
+  const question = profileGuideQuestions[profileGuide.step];
+
+  if (question.type === "mix") {
+    const selected = [...controls.profileGuideContent.querySelectorAll("[data-guide-mix]:checked")].map((item) => item.value);
+    profileGuide.draft[question.field] = selected.length
+      ? `Emphasize ${selected.join(", ")}. Keep the mix flexible based on recovery and consistency.`
+      : "";
+    return;
+  }
+
+  profileGuide.draft[question.field] = question.type === "number" ? Number(input.value || 0) : input.value;
+}
+
+function handleProfileGuideAction(action) {
+  if (!profileGuide) return;
+
+  if (action === "close") {
+    controls.profileGuideDialog.close();
+    profileGuide = null;
+    return;
+  }
+
+  if (action === "back") {
+    profileGuide.step = Math.max(0, profileGuide.step - 1);
+    renderProfileGuideStep();
+    return;
+  }
+
+  if (action === "next") {
+    profileGuide.step = Math.min(profileGuideQuestions.length - 1, profileGuide.step + 1);
+    renderProfileGuideStep();
+    return;
+  }
+
+  if (action === "save") {
+    saveProfileGuide();
+  }
+}
+
+function saveProfileGuide() {
+  const profile = state.profiles.find((item) => item.id === profileGuide.profileId);
+  if (!profile) return;
+
+  profileGuideQuestions.forEach((question) => {
+    profile[question.field] = profileGuide.draft[question.field];
+  });
+  state.household.updated_at = nowIso();
+  normalizeProfileTables();
+  saveState();
+  controls.profileGuideDialog.close();
+  profileGuide = null;
+  renderProfiles();
+  renderMemory();
+  renderDataView();
 }
 
 function renderEquipment() {
@@ -1239,25 +1563,31 @@ function renderMemory() {
 function renderActiveSession() {
   if (!activeSessionId) {
     controls.workoutOutput.innerHTML = `<p class="empty-state">Create a shared workout to see the parent movement plan and each person's adapted version.</p>`;
-    document.querySelector("#workout-title").textContent = "Ready to generate";
-    document.querySelector("#estimate-main").textContent = "0";
+  document.querySelector("#workout-title").textContent = "Ready to generate";
+  document.querySelector("#estimate-main").textContent = "0";
     return;
   }
 
   const session = getSession(activeSessionId);
   if (!session) return;
 
-  const instances = state.user_workout_instances.filter((instance) => instance.shared_workout_session_id === session.id);
-  const maxEstimate = Math.max(...instances.map((instance) => instance.estimated_minutes), 0);
+  const allInstances = state.user_workout_instances.filter((instance) => instance.shared_workout_session_id === session.id);
+  const instances =
+    session.request?.participant_mode === "all"
+      ? allInstances
+      : allInstances.filter((instance) => instance.profile_id === activeProfileId);
+  const displayedInstances = instances.length ? instances : allInstances;
+  const maxEstimate = Math.max(...displayedInstances.map((instance) => instance.estimated_minutes), 0);
   document.querySelector("#workout-title").textContent = session.parent_workout_plan.title;
   document.querySelector("#exercise-count").textContent = session.parent_workout_plan.workout_size;
   document.querySelector("#estimate-main").textContent = maxEstimate;
-  document.querySelector("#participant-count").textContent = instances.length;
+  document.querySelector("#participant-count").textContent = displayedInstances.length;
+  document.querySelector("#participant-label").textContent = displayedInstances.length === 1 ? "person" : "people";
 
   controls.workoutOutput.innerHTML = `
     ${renderParentPlan(session.parent_workout_plan)}
     <div class="instance-grid">
-      ${instances.map((instance) => renderUserInstance(instance, session)).join("")}
+      ${displayedInstances.map((instance) => renderUserInstance(instance, session)).join("")}
     </div>
   `;
 }
@@ -1789,6 +2119,14 @@ function intentForPattern(pattern, request) {
 function getParticipants(request) {
   if (request.participant_mode === "all") return state.profiles;
   return state.profiles.filter((profile) => profile.id === request.participant_mode);
+}
+
+function getActiveProfile() {
+  return state.profiles.find((profile) => profile.id === activeProfileId);
+}
+
+function getOtherProfile() {
+  return state.profiles.find((profile) => profile.id !== activeProfileId);
 }
 
 function getAvailableEquipment() {

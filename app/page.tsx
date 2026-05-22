@@ -1,26 +1,68 @@
 import Script from "next/script";
+import { getProfileLabel, getSessionFromCookies, isPasswordConfigured } from "@/lib/auth";
 
-export default function Home() {
+type HomeProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function Home({ searchParams }: HomeProps) {
+  const session = await getSessionFromCookies();
+  const params = searchParams ? await searchParams : {};
+  const loginStatus = Array.isArray(params.login) ? params.login[0] : params.login;
+
+  if (!session) {
+    return <LoginScreen loginStatus={loginStatus} />;
+  }
+
+  const selectedName = getProfileLabel(session.profileId);
+
   return (
     <>
-      <main className="app-shell">
+      <main className="app-shell" data-selected-profile={session.profileId}>
         <header className="app-header">
           <div>
             <p className="eyebrow">RemiTrainer</p>
             <h1>Household workouts that remember</h1>
           </div>
-          <div className="status-strip" aria-live="polite">
-            <span id="saved-sessions">0 saved sessions</span>
-            <span id="saved-feedback">0 feedback logs</span>
-            <span id="saved-bans">0 banned exercises</span>
+          <div className="header-actions">
+            <div className="account-strip">
+              <span>
+                Signed in as <strong id="active-profile-name">{selectedName}</strong>
+              </span>
+              <form action="/api/logout" method="post">
+                <button className="ghost-action" type="submit">
+                  Switch
+                </button>
+              </form>
+            </div>
+            <div className="status-strip" aria-live="polite">
+              <span id="saved-sessions">0 saved sessions</span>
+              <span id="saved-feedback">0 feedback logs</span>
+              <span id="saved-bans">0 banned exercises</span>
+            </div>
           </div>
         </header>
 
-        <section className="panel request-panel" aria-labelledby="request-title">
+        <nav className="app-tabs" aria-label="Main sections">
+          <button className="tab-button active" type="button" data-app-tab="workout">
+            Workout
+          </button>
+          <button className="tab-button" type="button" data-app-tab="profile">
+            Profile
+          </button>
+          <button className="tab-button" type="button" data-app-tab="memory">
+            Memory
+          </button>
+          <button className="tab-button" type="button" data-app-tab="data">
+            Data
+          </button>
+        </nav>
+
+        <section className="panel request-panel is-active-tab" data-section-panel="workout" aria-labelledby="request-title">
           <div className="section-title">
             <div>
               <p className="eyebrow">Request</p>
-              <h2 id="request-title">Generate a shared plan</h2>
+              <h2 id="request-title">Generate a workout</h2>
             </div>
             <button id="reset-demo" className="ghost-action" type="button">
               Reset demo data
@@ -28,6 +70,7 @@ export default function Home() {
           </div>
 
           <form id="workout-form" className="request-form">
+            <input id="active-profile" type="hidden" value={session.profileId} />
             <fieldset className="control-group">
               <legend>Workout size</legend>
               <div className="size-grid" role="radiogroup" aria-label="Workout size">
@@ -102,14 +145,21 @@ export default function Home() {
                 </select>
               </label>
 
-              <label className="field">
-                <span>Participants</span>
-                <select id="participants" name="participants" defaultValue="all">
+              <div className="field join-field">
+                <span>Shared workout</span>
+                <label className="switch join-switch">
+                  <input id="household-join" type="checkbox" />
+                  <span className="switch-track" aria-hidden="true"></span>
+                  <span>
+                    <strong id="join-profile-name">Other person</strong> joins
+                  </span>
+                </label>
+                <select id="participants" name="participants" defaultValue={session.profileId} hidden aria-hidden="true">
                   <option value="all">Everyone available</option>
                   <option value="jon">Jon only</option>
                   <option value="jeanne">Jeanne only</option>
                 </select>
-              </label>
+              </div>
             </div>
 
             <div className="toggle-row">
@@ -131,11 +181,11 @@ export default function Home() {
           </form>
         </section>
 
-        <section className="panel" aria-labelledby="household-title">
+        <section className="panel household-panel is-active-tab" data-section-panel="profile" aria-labelledby="household-title">
           <div className="section-title">
             <div>
               <p className="eyebrow">Household</p>
-              <h2 id="household-title">Profiles and equipment</h2>
+              <h2 id="household-title">Profile and equipment</h2>
             </div>
           </div>
           <div id="profiles" className="profile-grid"></div>
@@ -145,7 +195,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="panel trainer-panel" aria-labelledby="trainer-title">
+        <section className="panel trainer-panel" data-section-panel="memory" aria-labelledby="trainer-title">
           <div className="section-title">
             <div>
               <p className="eyebrow">Trainer memory</p>
@@ -155,7 +205,7 @@ export default function Home() {
           <div id="history-insights" className="insight-grid"></div>
         </section>
 
-        <section className="panel output-panel" aria-live="polite" aria-labelledby="workout-title">
+        <section className="panel output-panel is-active-tab" data-section-panel="workout" aria-live="polite" aria-labelledby="workout-title">
           <div className="summary-bar">
             <div>
               <p className="eyebrow">Shared session</p>
@@ -169,19 +219,19 @@ export default function Home() {
                 <strong id="estimate-main">0</strong> min
               </span>
               <span>
-                <strong id="participant-count">2</strong> people
+                <strong id="participant-count">1</strong> <span id="participant-label">person</span>
               </span>
             </div>
           </div>
 
           <div id="workout-output" className="workout-output">
             <p className="empty-state">
-              Create a shared workout to see the parent movement plan and each person&apos;s adapted version.
+              Create a workout to see the movement plan and the selected person&apos;s adapted version.
             </p>
           </div>
         </section>
 
-        <section className="panel data-panel" aria-labelledby="data-title">
+        <section className="panel data-panel" data-section-panel="data" aria-labelledby="data-title">
           <div className="section-title">
             <div>
               <p className="eyebrow">AI contract</p>
@@ -210,7 +260,53 @@ export default function Home() {
         <div id="instruction-detail"></div>
       </dialog>
 
+      <dialog id="profile-guide-dialog" className="profile-guide-dialog">
+        <div id="profile-guide-content"></div>
+      </dialog>
+
       <Script src="/remitrainer-app.js" strategy="afterInteractive" />
     </>
+  );
+}
+
+function LoginScreen({ loginStatus }: { loginStatus?: string }) {
+  const passwordConfigured = isPasswordConfigured();
+  const errorMessage =
+    loginStatus === "failed"
+      ? "That password did not match. Try again."
+      : loginStatus === "not_configured"
+        ? "Set REMITRAINER_PASSWORD in Vercel before opening the app."
+        : "";
+
+  return (
+    <main className="login-shell">
+      <section className="login-panel" aria-labelledby="login-title">
+        <p className="eyebrow">RemiTrainer</p>
+        <h1 id="login-title">Choose who is training</h1>
+        <p className="login-copy">
+          One shared household password keeps the workout generator private for Jon and Jeanne.
+        </p>
+        {!passwordConfigured ? (
+          <p className="login-error">Add `REMITRAINER_PASSWORD` in Vercel, then redeploy.</p>
+        ) : null}
+        {errorMessage ? <p className="login-error">{errorMessage}</p> : null}
+        <form className="login-form" action="/api/login" method="post">
+          <label className="field">
+            <span>User</span>
+            <select name="profile_id" defaultValue="jeanne">
+              <option value="jeanne">Jeanne</option>
+              <option value="jon">Jon</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input name="password" type="password" autoComplete="current-password" required />
+          </label>
+          <button className="primary-action" type="submit" disabled={!passwordConfigured}>
+            Open RemiTrainer
+          </button>
+        </form>
+      </section>
+    </main>
   );
 }

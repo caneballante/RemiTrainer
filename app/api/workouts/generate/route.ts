@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { z } from "zod";
+import { getSessionFromRequest } from "@/lib/auth";
 import { saveWorkoutToDatabase } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -27,6 +28,11 @@ function getOpenAI() {
 }
 
 export async function POST(request: NextRequest) {
+  const session = getSessionFromRequest(request);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
   const json = await request.json().catch(() => null);
   const parsed = GenerateWorkoutBody.safeParse(json);
 
