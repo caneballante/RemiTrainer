@@ -778,11 +778,15 @@ let currentDataTab = "context";
 let currentAppTab = "workout";
 let activeProfileId = controls.activeProfile?.value || controls.appShell?.dataset.selectedProfile || "jeanne";
 let profileGuide = null;
+let cloudSyncTimer = null;
+let isApplyingCloudState = false;
+let hasLoadedCloudState = false;
 let activeSessionId = state.shared_workout_sessions.at(-1)?.id || null;
 let lastStrictJson = activeSessionId ? getSession(activeSessionId)?.original_ai_response || null : null;
 
 renderApp();
 bindEvents();
+syncStateFromCloud();
 
 function bindEvents() {
   controls.appTabs.forEach((button) => {
@@ -825,6 +829,7 @@ function bindEvents() {
     state.household.updated_at = nowIso();
     normalizeProfileTables();
     saveState();
+    queueStateSync(700);
     renderMemory();
     renderDataView();
   });
@@ -840,6 +845,7 @@ function bindEvents() {
     if (!target.matches("input[type='checkbox']")) return;
     updateHouseholdEquipment(target.value, target.checked);
     saveState();
+    queueStateSync(200);
     renderDataView();
   });
 
@@ -995,6 +1001,122 @@ async function requestCloudWorkout(request, compactContext, parentPlan) {
     console.info("Cloud workout generation unavailable; using local fallback.", error);
     return null;
   }
+}
+
+async function syncStateFromCloud() {
+  if (!window.location.origin.startsWith("http")) return;
+
+  try {
+    const response = await fetch("/api/household/state");
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    if (!payload.database_configured) {
+      hasLoadedCloudState = true;
+      return;
+    }
+
+    const cloudState = payload.state;
+    hasLoadedCloudState = true;
+
+    if (cloudState && hasDurableCloudState(cloudState)) {
+      isApplyingCloudState = true;
+      state = mergeCloudState(cloudState);
+      activeSessionId = state.shared_workout_sessions.at(-1)?.id || null;
+      lastStrictJson = activeSessionId ? getSession(activeSessionId)?.original_ai_response || null : null;
+      saveState();
+      renderApp();
+      isApplyingCloudState = false;
+      return;
+    }
+
+    queueStateSync(50);
+  } catch (error) {
+    console.info("Cloud household state unavailable; keeping local state.", error);
+  } finally {
+    isApplyingCloudState = false;
+  }
+}
+
+function hasDurableCloudState(cloudState) {
+  return [
+    cloudState.profiles,
+    cloudState.household_equipment,
+    cloudState.profile_banned_exercises,
+    cloudState.shared_workout_sessions,
+    cloudState.exercise_feedback,
+  ].some((items) => Array.isArray(items) && items.length);
+}
+
+function mergeCloudState(cloudState) {
+  const defaults = createDefaultState();
+  const mergedProfiles = mergeById(defaults.profiles, cloudState.profiles || [], "id");
+  const mergedEquipment = mergeById(defaults.household_equipment, cloudState.household_equipment || [], "equipment_id");
+  const mergedAssets = mergeById(defaults.exercise_instruction_assets, cloudState.exercise_instruction_assets || [], "exercise_id");
+
+  return {
+    ...defaults,
+    ...cloudState,
+    version: 2,
+    household: cloudState.household || defaults.household,
+    profiles: mergedProfiles,
+    household_equipment: mergedEquipment,
+    exercise_instruction_assets: mergedAssets,
+    profile_limitations: cloudState.profile_limitations?.length ? cloudState.profile_limitations : defaults.profile_limitations,
+    profile_banned_exercises: cloudState.profile_banned_exercises || [],
+    shared_workout_sessions: cloudState.shared_workout_sessions || [],
+    user_workout_instances: cloudState.user_workout_instances || [],
+    workout_exercise_instances: cloudState.workout_exercise_instances || [],
+    exercise_feedback: cloudState.exercise_feedback || [],
+  };
+}
+
+function mergeById(defaultItems, cloudItems, idKey) {
+  const records = new Map(defaultItems.map((item) => [item[idKey], item]));
+  cloudItems.forEach((item) => {
+    records.set(item[idKey], { ...(records.get(item[idKey]) || {}), ...item });
+  });
+  return [...records.values()];
+}
+
+function queueStateSync(delayMs = 500) {
+  if (isApplyingCloudState || !hasLoadedCloudState || !window.location.origin.startsWith("http")) return;
+  window.clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = window.setTimeout(saveStateToCloud, delayMs);
+}
+
+async function saveStateToCloud() {
+  try {
+    const response = await fetch("/api/household/state", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ state: toCloudState(state) }),
+    });
+
+    if (!response.ok) {
+      console.info("Cloud household state save failed.", await response.text());
+    }
+  } catch (error) {
+    console.info("Cloud household state save unavailable.", error);
+  }
+}
+
+function toCloudState(currentState) {
+  return {
+    version: currentState.version,
+    household: currentState.household,
+    profiles: currentState.profiles,
+    household_equipment: currentState.household_equipment,
+    profile_limitations: currentState.profile_limitations,
+    profile_banned_exercises: currentState.profile_banned_exercises,
+    shared_workout_sessions: currentState.shared_workout_sessions,
+    user_workout_instances: currentState.user_workout_instances,
+    workout_exercise_instances: currentState.workout_exercise_instances,
+    exercise_feedback: currentState.exercise_feedback,
+    exercise_instruction_assets: currentState.exercise_instruction_assets,
+  };
 }
 
 function buildExerciseLibraryPayload() {
@@ -1243,8 +1365,9 @@ function validateGeneratedWorkout(originalAiResponse, request) {
 }
 
 function saveGeneratedWorkout(request, compactContext, originalAiResponse, finalPlan, cloudMetadata = {}) {
+  const persistedSessionId = cloudMetadata?.persistence_status?.sessionId;
   const session = {
-    id: id("session"),
+    id: persistedSessionId || id("session"),
     household_id: state.household.id,
     requested_at: nowIso(),
     request,
@@ -1284,6 +1407,7 @@ function saveGeneratedWorkout(request, compactContext, originalAiResponse, final
 
   trimHistory();
   saveState();
+  queueStateSync(100);
   return { session, instances };
 }
 
@@ -1516,6 +1640,7 @@ function saveProfileGuide() {
   state.household.updated_at = nowIso();
   normalizeProfileTables();
   saveState();
+  queueStateSync(250);
   controls.profileGuideDialog.close();
   profileGuide = null;
   renderProfiles();
@@ -1707,11 +1832,17 @@ function renderDataView() {
   }
 
   if (currentDataTab === "response") {
-    controls.dataView.textContent = lastStrictJson || JSON.stringify({ message: "No generated workout yet." }, null, 2);
+    controls.dataView.textContent = lastStrictJson
+      ? formatDataView(lastStrictJson)
+      : JSON.stringify({ message: "No generated workout yet." }, null, 2);
     return;
   }
 
   controls.dataView.textContent = JSON.stringify(buildCompactContext(getRequest()), null, 2);
+}
+
+function formatDataView(value) {
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
 function recordFeedback(button) {
@@ -1740,6 +1871,7 @@ function recordFeedback(button) {
   }
 
   saveState();
+  queueStateSync(100);
   renderMemory();
   renderActiveSession();
   renderDataView();

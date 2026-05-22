@@ -53,6 +53,9 @@ schema includes:
 ## Server routes
 
 - `GET /api/health` checks whether `DATABASE_URL` and `OPENAI_API_KEY` are configured.
+- `GET /api/household/state` loads the shared household state from Neon after login.
+- `POST /api/household/state` saves profiles, equipment, generated sessions, feedback,
+  bans, and instruction asset metadata to Neon.
 - `POST /api/workouts/generate` requests strict JSON from OpenAI, saves the generated
   workout to Neon when `DATABASE_URL` is configured, and returns the validated workout.
 
