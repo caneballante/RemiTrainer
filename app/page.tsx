@@ -266,6 +266,10 @@ export default async function Home({ searchParams }: HomeProps) {
         <div id="profile-guide-content"></div>
       </dialog>
 
+      <dialog id="workout-player-dialog" className="workout-player-dialog">
+        <div id="workout-player-content"></div>
+      </dialog>
+
       <Script src="/remitrainer-app.js" strategy="afterInteractive" />
     </>
   );

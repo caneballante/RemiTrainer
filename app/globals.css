@@ -630,6 +630,18 @@ legend,
   margin-bottom: 12px;
 }
 
+.instance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.compact-action {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
 .exercise-list {
   display: grid;
   gap: 10px;
@@ -759,6 +771,26 @@ legend,
   box-shadow: var(--shadow);
 }
 
+.workout-player-dialog {
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  background: var(--surface-strong);
+  color: var(--ink);
+  padding: 0;
+}
+
+.workout-player-dialog::backdrop {
+  background: rgba(28, 34, 31, 0.42);
+}
+
+body:has(.workout-player-dialog[open]) {
+  overflow: hidden;
+}
+
 .profile-guide-dialog::backdrop {
   background: rgba(28, 34, 31, 0.38);
 }
@@ -866,6 +898,134 @@ legend,
   color: var(--ink);
 }
 
+.player-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: clamp(12px, 2.5vw, 22px);
+  min-height: 100dvh;
+  padding: clamp(14px, 4vw, 32px);
+}
+
+.player-header,
+.player-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.player-header h2 {
+  margin-bottom: 0;
+  font-size: clamp(1.25rem, 4vw, 2rem);
+}
+
+.player-progress {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 740;
+}
+
+.player-progress div {
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.player-progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.player-card,
+.player-finish-card {
+  display: grid;
+  align-content: center;
+  gap: clamp(16px, 3vw, 26px);
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: clamp(18px, 5vw, 42px);
+}
+
+.player-card h1,
+.player-finish-card h1 {
+  max-width: 13ch;
+  margin-bottom: 0;
+  font-size: clamp(2.2rem, 8vw, 5.5rem);
+  line-height: 0.95;
+}
+
+.player-note,
+.player-subtle {
+  max-width: 64ch;
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.player-status-row,
+.player-dose-grid,
+.player-summary-grid,
+.player-feedback-grid,
+.player-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.player-status-row span,
+.player-dose-grid div,
+.player-summary-grid div {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  padding: 9px 10px;
+}
+
+.player-dose-grid div,
+.player-summary-grid div {
+  display: grid;
+  min-width: 116px;
+  gap: 4px;
+}
+
+.player-dose-grid span,
+.player-summary-grid span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 740;
+}
+
+.player-dose-grid strong,
+.player-summary-grid strong {
+  line-height: 1.2;
+}
+
+.player-feedback-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.player-complete {
+  min-height: 56px;
+}
+
+.player-feedback-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.player-feedback-grid .feedback-button {
+  min-height: 44px;
+}
+
+.player-footer {
+  align-items: center;
+}
+
 .instruction-visual {
   display: grid;
   min-height: 220px;
@@ -953,9 +1113,12 @@ legend,
   .section-title,
   .summary-bar,
   .user-instance > header,
+  .instance-actions,
   .exercise-item,
   .guide-header,
-  .guide-actions {
+  .guide-actions,
+  .player-header,
+  .player-footer {
     display: grid;
     grid-template-columns: 1fr;
     justify-items: stretch;
@@ -978,7 +1141,8 @@ legend,
 
   .check-grid,
   .mini-grid,
-  .choice-grid {
+  .choice-grid,
+  .player-feedback-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -989,12 +1153,39 @@ legend,
     padding: 8px 0 0;
     text-align: left;
   }
+
+  .player-shell {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .player-card,
+  .player-finish-card {
+    padding: 18px;
+  }
+
+  .player-card h1,
+  .player-finish-card h1 {
+    max-width: 12ch;
+    font-size: clamp(2rem, 12vw, 3.75rem);
+  }
+
+  .player-dose-grid,
+  .player-summary-grid,
+  .player-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 460px) {
   .check-grid,
   .mini-grid,
   .choice-grid,
+  .player-feedback-grid,
+  .player-dose-grid,
+  .player-summary-grid,
+  .player-nav,
   .inline-field {
     grid-template-columns: 1fr;
   }

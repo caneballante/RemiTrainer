@@ -75,6 +75,18 @@ const feedbackLabels = {
   ban: "ban this exercise",
 };
 
+const workoutPlayerFeedbackLabels = {
+  easy: "Too easy",
+  right: "Just right",
+  hard: "Too hard",
+  pain: "Pain/discomfort",
+  skipped: "Skipped",
+  ban: "Ban this exercise",
+};
+
+const completionRatings = new Set(["complete", "easy", "right", "hard"]);
+const addressedRatings = new Set(["complete", "easy", "right", "hard", "pain", "skipped", "ban"]);
+
 const profileGuideQuestions = [
   {
     field: "age",
@@ -771,6 +783,8 @@ const controls = {
   closeDialog: document.querySelector("#close-dialog"),
   profileGuideDialog: document.querySelector("#profile-guide-dialog"),
   profileGuideContent: document.querySelector("#profile-guide-content"),
+  workoutPlayerDialog: document.querySelector("#workout-player-dialog"),
+  workoutPlayerContent: document.querySelector("#workout-player-content"),
 };
 
 let state = loadState();
@@ -778,6 +792,13 @@ let currentDataTab = "context";
 let currentAppTab = "workout";
 let activeProfileId = controls.activeProfile?.value || controls.appShell?.dataset.selectedProfile || "jeanne";
 let profileGuide = null;
+let workoutPlayer = {
+  sessionId: null,
+  instanceId: null,
+  index: 0,
+  showFinish: false,
+  touchStartX: 0,
+};
 let cloudSyncTimer = null;
 let isApplyingCloudState = false;
 let hasLoadedCloudState = false;
@@ -856,6 +877,12 @@ function bindEvents() {
       return;
     }
 
+    const startButton = event.target.closest("[data-start-workout]");
+    if (startButton) {
+      openWorkoutPlayer(startButton.dataset.sessionId, startButton.dataset.instanceId);
+      return;
+    }
+
     const feedbackButton = event.target.closest("[data-feedback]");
     if (feedbackButton) {
       recordFeedback(feedbackButton);
@@ -890,6 +917,57 @@ function bindEvents() {
 
   controls.profileGuideDialog.addEventListener("close", () => {
     if (!controls.profileGuideDialog.open) profileGuide = null;
+  });
+
+  controls.workoutPlayerDialog.addEventListener("click", (event) => {
+    const detailButton = event.target.closest("[data-detail-exercise]");
+    if (detailButton) {
+      openInstructionDetail(detailButton.dataset.detailExercise);
+      return;
+    }
+
+    const feedbackButton = event.target.closest("[data-player-feedback]");
+    if (feedbackButton) {
+      handleWorkoutPlayerFeedback(feedbackButton);
+      return;
+    }
+
+    const action = event.target.closest("[data-player-action]")?.dataset.playerAction;
+    if (!action) return;
+    handleWorkoutPlayerAction(action);
+  });
+
+  controls.workoutPlayerDialog.addEventListener("close", () => {
+    resetWorkoutPlayer();
+  });
+
+  controls.workoutPlayerDialog.addEventListener(
+    "touchstart",
+    (event) => {
+      workoutPlayer.touchStartX = event.changedTouches[0]?.clientX || 0;
+    },
+    { passive: true },
+  );
+
+  controls.workoutPlayerDialog.addEventListener(
+    "touchend",
+    (event) => {
+      const touchEndX = event.changedTouches[0]?.clientX || 0;
+      handleWorkoutPlayerSwipe(touchEndX - workoutPlayer.touchStartX);
+    },
+    { passive: true },
+  );
+
+  document.addEventListener("keydown", (event) => {
+    if (!controls.workoutPlayerDialog.open) return;
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      moveWorkoutPlayer(1);
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      moveWorkoutPlayer(-1);
+    }
   });
 
   controls.resetDemo.addEventListener("click", () => {
@@ -1696,12 +1774,7 @@ function renderActiveSession() {
   const session = getSession(activeSessionId);
   if (!session) return;
 
-  const allInstances = state.user_workout_instances.filter((instance) => instance.shared_workout_session_id === session.id);
-  const instances =
-    session.request?.participant_mode === "all"
-      ? allInstances
-      : allInstances.filter((instance) => instance.profile_id === activeProfileId);
-  const displayedInstances = instances.length ? instances : allInstances;
+  const displayedInstances = getVisibleInstances(session);
   const maxEstimate = Math.max(...displayedInstances.map((instance) => instance.estimated_minutes), 0);
   document.querySelector("#workout-title").textContent = session.parent_workout_plan.title;
   document.querySelector("#exercise-count").textContent = session.parent_workout_plan.workout_size;
@@ -1740,6 +1813,7 @@ function renderParentPlan(parentPlan) {
 
 function renderUserInstance(instance, session) {
   const profile = state.profiles.find((item) => item.id === instance.profile_id);
+  const summary = buildWorkoutPlayerSummary(instance);
   return `
     <article class="user-instance">
       <header>
@@ -1747,7 +1821,17 @@ function renderUserInstance(instance, session) {
           <h3>${escapeHtml(profile.name)}'s version</h3>
           <p class="subtle">${escapeHtml(instance.adaptation_notes.join(" "))}</p>
         </div>
-        <span class="tag">${instance.estimated_minutes} min estimate</span>
+        <div class="instance-actions">
+          <span class="tag">${instance.estimated_minutes} min estimate</span>
+          <span class="tag">${summary.addressed} of ${summary.total} addressed</span>
+          <button
+            class="primary-action compact-action"
+            type="button"
+            data-start-workout
+            data-session-id="${session.id}"
+            data-instance-id="${instance.id}"
+          >Start workout</button>
+        </div>
       </header>
       ${instance.warmup.length ? renderPrepList("Warmup", instance.warmup) : ""}
       <ul class="exercise-list">
@@ -1784,6 +1868,7 @@ function renderExerciseItem(exerciseItem, instance, session) {
     (ban) => ban.profile_id === instance.profile_id && ban.exercise_id === exerciseItem.exercise_id,
   );
   const lastFeedback = feedback.at(-1)?.rating;
+  const status = getExerciseStatus(exerciseItem);
   const equipment = exerciseItem.required_equipment.map(labelForEquipment).join(", ");
   return `
     <li class="exercise-item ${isBanned ? "is-banned" : ""}">
@@ -1795,6 +1880,7 @@ function renderExerciseItem(exerciseItem, instance, session) {
           <span>${escapeHtml(equipment)}</span>
           ${exerciseItem.substitution_reason ? `<span>${escapeHtml(exerciseItem.substitution_reason)}</span>` : ""}
           ${lastFeedback ? `<span>Last: ${escapeHtml(feedbackLabels[lastFeedback])}</span>` : ""}
+          ${status !== "pending" ? `<span>${escapeHtml(labelForExerciseStatus(status))}</span>` : ""}
         </div>
       </div>
       <div class="exercise-dose">
@@ -1825,6 +1911,314 @@ function renderExerciseItem(exerciseItem, instance, session) {
   `;
 }
 
+function openWorkoutPlayer(sessionId, instanceId) {
+  const session = getSession(sessionId);
+  const instance = getSessionInstances(sessionId).find((item) => item.id === instanceId);
+  if (!session || !instance || !instance.exercises.length) return;
+
+  const firstOpenIndex = instance.exercises.findIndex((exerciseItem) => !isExerciseAddressed(exerciseItem));
+  workoutPlayer = {
+    sessionId,
+    instanceId,
+    index: firstOpenIndex >= 0 ? firstOpenIndex : 0,
+    showFinish: firstOpenIndex < 0,
+    touchStartX: 0,
+  };
+  renderWorkoutPlayer();
+  controls.workoutPlayerDialog.showModal();
+}
+
+function renderWorkoutPlayer() {
+  const context = getWorkoutPlayerContext();
+  if (!context) {
+    controls.workoutPlayerContent.innerHTML = "";
+    return;
+  }
+
+  const { session, instance, profile, exercises } = context;
+  const summary = buildWorkoutPlayerSummary(instance);
+
+  if (workoutPlayer.showFinish) {
+    controls.workoutPlayerContent.innerHTML = renderWorkoutFinish(session, instance, profile, summary);
+    return;
+  }
+
+  const exerciseItem = exercises[workoutPlayer.index];
+  const feedback = state.exercise_feedback.filter((item) => item.workout_exercise_instance_id === exerciseItem.id);
+  const lastFeedback = feedback.at(-1)?.rating;
+  const status = getExerciseStatus(exerciseItem);
+  const equipment = exerciseItem.required_equipment.map(labelForEquipment).join(", ");
+  const progressPercent = Math.round(((workoutPlayer.index + 1) / exercises.length) * 100);
+
+  controls.workoutPlayerContent.innerHTML = `
+    <div class="player-shell">
+      <header class="player-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(profile.name)} workout</p>
+          <h2>${escapeHtml(session.parent_workout_plan.title)}</h2>
+        </div>
+        <button class="ghost-action" type="button" data-player-action="close">Close</button>
+      </header>
+
+      <div class="player-progress">
+        <span>${workoutPlayer.index + 1} of ${exercises.length}</span>
+        <div><i style="width: ${progressPercent}%"></i></div>
+      </div>
+
+      <section class="player-card" aria-live="polite">
+        <div class="player-status-row">
+          <span>${escapeHtml(labelForExerciseStatus(status))}</span>
+          ${lastFeedback ? `<span>Last: ${escapeHtml(feedbackLabels[lastFeedback])}</span>` : ""}
+        </div>
+        <div>
+          <p class="eyebrow">${escapeHtml(exerciseItem.movement_label)}</p>
+          <h1>${escapeHtml(exerciseItem.exercise_name)}</h1>
+          <p class="player-note">${escapeHtml(exerciseItem.coaching_note)}</p>
+        </div>
+        <div class="player-dose-grid">
+          <div>
+            <span>Sets</span>
+            <strong>${exerciseItem.sets}</strong>
+          </div>
+          <div>
+            <span>Reps</span>
+            <strong>${escapeHtml(exerciseItem.reps)}</strong>
+          </div>
+          <div>
+            <span>Rest</span>
+            <strong>${exerciseItem.rest_seconds}s</strong>
+          </div>
+          <div>
+            <span>Equipment</span>
+            <strong>${escapeHtml(equipment || "None")}</strong>
+          </div>
+        </div>
+        ${exerciseItem.substitution_reason ? `<p class="player-subtle">${escapeHtml(exerciseItem.substitution_reason)}</p>` : ""}
+      </section>
+
+      <section class="player-feedback-panel">
+        <button
+          class="primary-action player-complete"
+          type="button"
+          data-player-feedback="complete"
+          ${playerFeedbackDataset(session, instance, exerciseItem)}
+        >Complete and next</button>
+        <div class="player-feedback-grid">
+          ${Object.entries(workoutPlayerFeedbackLabels)
+            .map(
+              ([rating, label]) => `
+                <button
+                  class="feedback-button"
+                  type="button"
+                  data-player-feedback="${rating}"
+                  ${playerFeedbackDataset(session, instance, exerciseItem)}
+                >${escapeHtml(label)}</button>
+              `,
+            )
+            .join("")}
+        </div>
+      </section>
+
+      <footer class="player-footer">
+        <button class="detail-button" type="button" data-detail-exercise="${exerciseItem.exercise_id}">Visual instructions</button>
+        <div class="player-nav">
+          <button class="ghost-action" type="button" data-player-action="previous" ${workoutPlayer.index === 0 ? "disabled" : ""}>
+            Previous
+          </button>
+          <button class="ghost-action" type="button" data-player-action="next">
+            ${workoutPlayer.index === exercises.length - 1 ? "Review" : "Next"}
+          </button>
+        </div>
+      </footer>
+    </div>
+  `;
+}
+
+function renderWorkoutFinish(session, instance, profile, summary) {
+  const flagged = [
+    summary.skipped ? `${summary.skipped} skipped` : "",
+    summary.pain ? `${summary.pain} pain/discomfort` : "",
+    summary.banned ? `${summary.banned} banned` : "",
+  ].filter(Boolean);
+
+  return `
+    <div class="player-shell player-finish-shell">
+      <header class="player-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(profile.name)} workout</p>
+          <h2>${escapeHtml(session.parent_workout_plan.title)}</h2>
+        </div>
+        <button class="ghost-action" type="button" data-player-action="close">Close</button>
+      </header>
+
+      <section class="player-finish-card">
+        <p class="eyebrow">Session wrap-up</p>
+        <h1>Are you finished?</h1>
+        <p class="player-note">
+          ${summary.addressed} of ${summary.total} exercises are logged for this workout.
+          ${flagged.length ? `RemiTrainer will remember: ${escapeHtml(flagged.join(", "))}.` : "RemiTrainer will use this to keep the next workout sustainable."}
+        </p>
+        <div class="player-summary-grid">
+          <div><span>Completed</span><strong>${summary.completed}</strong></div>
+          <div><span>Skipped</span><strong>${summary.skipped}</strong></div>
+          <div><span>Pain</span><strong>${summary.pain}</strong></div>
+          <div><span>Banned</span><strong>${summary.banned}</strong></div>
+        </div>
+      </section>
+
+      <footer class="player-footer">
+        <button class="ghost-action" type="button" data-player-action="review">Review exercises</button>
+        <button class="primary-action" type="button" data-player-action="finish">Finish workout</button>
+      </footer>
+    </div>
+  `;
+}
+
+function playerFeedbackDataset(session, instance, exerciseItem) {
+  return `
+    data-session-id="${session.id}"
+    data-instance-id="${instance.id}"
+    data-profile-id="${instance.profile_id}"
+    data-exercise-instance-id="${exerciseItem.id}"
+    data-exercise-id="${exerciseItem.exercise_id}"
+    data-exercise-name="${escapeHtml(exerciseItem.exercise_name)}"
+  `;
+}
+
+function handleWorkoutPlayerFeedback(button) {
+  const feedback = recordFeedback(button, { refresh: false });
+  const context = getWorkoutPlayerContext();
+  if (!context || !feedback) return;
+
+  const terminalRating = addressedRatings.has(feedback.rating);
+  if (terminalRating && workoutPlayer.index < context.exercises.length - 1) {
+    workoutPlayer.index += 1;
+  } else if (terminalRating && areAllExercisesAddressed(context.instance)) {
+    workoutPlayer.showFinish = true;
+  }
+
+  renderMemory();
+  renderActiveSession();
+  renderDataView();
+  renderWorkoutPlayer();
+}
+
+function handleWorkoutPlayerAction(action) {
+  if (action === "close" || action === "finish") {
+    controls.workoutPlayerDialog.close();
+    return;
+  }
+
+  if (action === "previous") {
+    moveWorkoutPlayer(-1);
+    return;
+  }
+
+  if (action === "next") {
+    moveWorkoutPlayer(1);
+    return;
+  }
+
+  if (action === "review") {
+    workoutPlayer.showFinish = false;
+    workoutPlayer.index = 0;
+    renderWorkoutPlayer();
+  }
+}
+
+function moveWorkoutPlayer(direction) {
+  const context = getWorkoutPlayerContext();
+  if (!context || workoutPlayer.showFinish) return;
+
+  const nextIndex = workoutPlayer.index + direction;
+  if (nextIndex < 0) return;
+
+  if (nextIndex >= context.exercises.length) {
+    if (areAllExercisesAddressed(context.instance)) {
+      workoutPlayer.showFinish = true;
+      renderWorkoutPlayer();
+    }
+    return;
+  }
+
+  workoutPlayer.index = nextIndex;
+  renderWorkoutPlayer();
+}
+
+function handleWorkoutPlayerSwipe(deltaX) {
+  if (Math.abs(deltaX) < 48) return;
+  moveWorkoutPlayer(deltaX < 0 ? 1 : -1);
+}
+
+function resetWorkoutPlayer() {
+  workoutPlayer = {
+    sessionId: null,
+    instanceId: null,
+    index: 0,
+    showFinish: false,
+    touchStartX: 0,
+  };
+}
+
+function getWorkoutPlayerContext() {
+  if (!workoutPlayer.sessionId || !workoutPlayer.instanceId) return null;
+
+  const session = getSession(workoutPlayer.sessionId);
+  const instance = getSessionInstances(workoutPlayer.sessionId).find((item) => item.id === workoutPlayer.instanceId);
+  if (!session || !instance) return null;
+
+  const profile = state.profiles.find((item) => item.id === instance.profile_id) || { name: instance.profile_id };
+  const exercises = instance.exercises || [];
+  if (!exercises.length) return null;
+
+  workoutPlayer.index = clamp(workoutPlayer.index, 0, exercises.length - 1);
+  return { session, instance, profile, exercises };
+}
+
+function buildWorkoutPlayerSummary(instance) {
+  const exercises = instance?.exercises || [];
+  const statuses = exercises.map(getExerciseStatus);
+  return {
+    total: exercises.length,
+    addressed: statuses.filter((status) => addressedRatings.has(status)).length,
+    completed: statuses.filter((status) => completionRatings.has(status)).length,
+    skipped: statuses.filter((status) => status === "skipped").length,
+    pain: statuses.filter((status) => status === "pain").length,
+    banned: statuses.filter((status) => status === "ban").length,
+  };
+}
+
+function areAllExercisesAddressed(instance) {
+  const summary = buildWorkoutPlayerSummary(instance);
+  return summary.total > 0 && summary.addressed >= summary.total;
+}
+
+function isExerciseAddressed(exerciseItem) {
+  return addressedRatings.has(getExerciseStatus(exerciseItem));
+}
+
+function getExerciseStatus(exerciseItem) {
+  const exerciseInstance = state.workout_exercise_instances.find((item) => item.id === exerciseItem.id);
+  const lastFeedback = state.exercise_feedback.filter((item) => item.workout_exercise_instance_id === exerciseItem.id).at(-1);
+  if (exerciseInstance?.completed_at) return lastFeedback?.rating && completionRatings.has(lastFeedback.rating) ? lastFeedback.rating : "complete";
+  if (lastFeedback?.rating) return lastFeedback.rating;
+  return "pending";
+}
+
+function labelForExerciseStatus(status) {
+  const labels = {
+    pending: "Not logged",
+    complete: "Complete",
+    easy: "Too easy",
+    right: "Just right",
+    hard: "Too hard",
+    pain: "Pain/discomfort",
+    skipped: "Skipped",
+    ban: "Banned",
+  };
+  return labels[status] || status;
+}
+
 function renderDataView() {
   if (currentDataTab === "schema") {
     controls.dataView.textContent = JSON.stringify(dataModelSchema, null, 2);
@@ -1845,8 +2239,8 @@ function formatDataView(value) {
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
-function recordFeedback(button) {
-  const rating = button.dataset.feedback;
+function recordFeedback(button, options = {}) {
+  const rating = button.dataset.feedback || button.dataset.playerFeedback;
   const feedback = {
     id: id("feedback"),
     profile_id: button.dataset.profileId,
@@ -1861,7 +2255,7 @@ function recordFeedback(button) {
 
   state.exercise_feedback.push(feedback);
 
-  if (rating === "complete") {
+  if (completionRatings.has(rating)) {
     const exerciseInstance = state.workout_exercise_instances.find((item) => item.id === feedback.workout_exercise_instance_id);
     if (exerciseInstance) exerciseInstance.completed_at = feedback.logged_at;
   }
@@ -1872,9 +2266,12 @@ function recordFeedback(button) {
 
   saveState();
   queueStateSync(100);
-  renderMemory();
-  renderActiveSession();
-  renderDataView();
+  if (options.refresh !== false) {
+    renderMemory();
+    renderActiveSession();
+    renderDataView();
+  }
+  return feedback;
 }
 
 function banExercise(feedback) {
@@ -2251,6 +2648,16 @@ function intentForPattern(pattern, request) {
 function getParticipants(request) {
   if (request.participant_mode === "all") return state.profiles;
   return state.profiles.filter((profile) => profile.id === request.participant_mode);
+}
+
+function getSessionInstances(sessionId) {
+  return state.user_workout_instances.filter((instance) => instance.shared_workout_session_id === sessionId);
+}
+
+function getVisibleInstances(session) {
+  const allInstances = getSessionInstances(session.id);
+  const activeInstances = allInstances.filter((instance) => instance.profile_id === activeProfileId);
+  return activeInstances.length ? activeInstances : allInstances;
 }
 
 function getActiveProfile() {
