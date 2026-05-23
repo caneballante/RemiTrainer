@@ -23,6 +23,8 @@ Copy `.env.example` to `.env.local` and fill in:
 DATABASE_URL="postgres://USER:PASSWORD@HOST.neon.tech/remitrainer?sslmode=require"
 OPENAI_API_KEY="sk-proj-..."
 OPENAI_MODEL="gpt-5.1"
+BLOB_READ_WRITE_TOKEN="vercel-blob-rw-token"
+OPENAI_IMAGE_MODEL="gpt-image-1"
 REMITRAINER_PASSWORD="choose-a-shared-household-password"
 REMITRAINER_SESSION_SECRET="optional-long-random-cookie-signing-secret"
 ```
@@ -58,6 +60,8 @@ schema includes:
   bans, and instruction asset metadata to Neon.
 - `GET/POST/PATCH /api/shared-workout-invites` checks, sends, and opens manual
   shared workout invites between Jon and Jeanne.
+- `POST /api/exercise-images/generate` generates missing exercise illustrations with
+  OpenAI, uploads them to Vercel Blob, and saves the Blob URL to Neon.
 - `POST /api/workouts/generate` requests strict JSON from OpenAI, saves the generated
   workout to Neon when `DATABASE_URL` is configured, and returns the validated workout.
 

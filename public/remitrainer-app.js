@@ -812,6 +812,7 @@ let workoutPlayer = {
   showFinish: false,
   touchStartX: 0,
 };
+let activeInstructionExerciseId = null;
 let sharedWorkoutDialogState = null;
 let cloudSyncTimer = null;
 let isApplyingCloudState = false;
@@ -916,6 +917,12 @@ function bindEvents() {
 
   controls.closeDialog.addEventListener("click", () => {
     controls.instructionDialog.close();
+  });
+
+  controls.instructionDetail.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-generate-exercise-image]");
+    if (!button) return;
+    await generateExerciseImage(button.dataset.generateExerciseImage);
   });
 
   controls.profileGuideDialog.addEventListener("click", (event) => {
@@ -2537,10 +2544,24 @@ function banExercise(feedback) {
 }
 
 function openInstructionDetail(exerciseId) {
+  activeInstructionExerciseId = exerciseId;
   const item = getExercise(exerciseId);
+  renderInstructionDetail(item);
+  controls.instructionDialog.showModal();
+}
+
+function renderInstructionDetail(item, statusMessage = "") {
   const visual = item.instruction_image_url
     ? `<img src="${escapeHtml(item.instruction_image_url)}" alt="${escapeHtml(item.name)} instruction" />`
-    : `<div><strong>No image yet</strong><p class="subtle">${escapeHtml(item.image_prompt)}</p></div>`;
+    : `
+      <div class="instruction-placeholder">
+        <strong>No image yet</strong>
+        <p class="subtle">${escapeHtml(item.image_prompt)}</p>
+        <button class="primary-action compact-action" type="button" data-generate-exercise-image="${item.id}">
+          Generate illustration
+        </button>
+      </div>
+    `;
 
   controls.instructionDetail.innerHTML = `
     <div class="instruction-content">
@@ -2549,6 +2570,7 @@ function openInstructionDetail(exerciseId) {
         <h2>${escapeHtml(item.name)}</h2>
       </div>
       <div class="instruction-visual">${visual}</div>
+      ${statusMessage ? `<p class="instruction-status">${escapeHtml(statusMessage)}</p>` : ""}
       <div class="instruction-columns">
         <section>
           <h3>Steps</h3>
@@ -2583,8 +2605,66 @@ function openInstructionDetail(exerciseId) {
       )}</pre>
     </div>
   `;
+}
 
-  controls.instructionDialog.showModal();
+async function generateExerciseImage(exerciseId) {
+  const item = getExercise(exerciseId);
+  const button = controls.instructionDetail.querySelector("[data-generate-exercise-image]");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Generating...";
+  }
+  renderInstructionDetail(item, "Generating illustration. This can take a moment.");
+
+  try {
+    const response = await fetch("/api/exercise-images/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        exercise_id: item.id,
+        exercise_name: item.name,
+        image_prompt: item.image_prompt,
+        steps: item.steps,
+        easier_version: item.easier_version,
+        harder_version: item.harder_version,
+        common_mistakes: item.common_mistakes,
+        safety_notes: item.safety_notes,
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      renderInstructionDetail(item, payload.error || "Could not generate illustration.");
+      return;
+    }
+
+    item.instruction_image_url = payload.instruction_image_url;
+    const asset = state.exercise_instruction_assets.find((record) => record.exercise_id === item.id);
+    if (asset) {
+      asset.instruction_image_url = payload.instruction_image_url;
+      asset.image_prompt = item.image_prompt;
+      asset.updated_at = nowIso();
+    } else {
+      state.exercise_instruction_assets.push({
+        exercise_id: item.id,
+        instruction_image_url: payload.instruction_image_url,
+        image_prompt: item.image_prompt,
+        steps: item.steps,
+        easier_version: item.easier_version,
+        harder_version: item.harder_version,
+        common_mistakes: item.common_mistakes,
+        safety_notes: item.safety_notes,
+        updated_at: nowIso(),
+      });
+    }
+    saveState();
+    renderInstructionDetail(item, "Illustration saved.");
+  } catch (error) {
+    console.info("Exercise image generation failed.", error);
+    renderInstructionDetail(item, "Could not generate illustration. Try again later.");
+  }
 }
 
 function selectExerciseForSlot(slot, profile, request, excluded = new Set()) {

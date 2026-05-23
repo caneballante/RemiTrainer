@@ -266,6 +266,71 @@ export async function markSharedWorkoutInvite(inviteId: string, profileId: strin
   return rows[0] || null;
 }
 
+export async function saveExerciseInstructionImage(input: {
+  exerciseId: string;
+  instructionImageUrl: string;
+  imagePrompt: string;
+  steps?: Array<string>;
+  easierVersion?: string;
+  harderVersion?: string;
+  commonMistakes?: Array<string>;
+  safetyNotes?: Array<string>;
+}) {
+  const sql = getSql();
+
+  const rows = (await sql`
+    insert into exercise_instruction_assets (
+      exercise_id,
+      instruction_image_url,
+      image_prompt,
+      steps,
+      easier_version,
+      harder_version,
+      common_mistakes,
+      safety_notes,
+      updated_at
+    )
+    values (
+      ${input.exerciseId},
+      ${input.instructionImageUrl},
+      ${input.imagePrompt},
+      ${JSON.stringify(input.steps || [])}::jsonb,
+      ${nullableString(input.easierVersion)},
+      ${nullableString(input.harderVersion)},
+      ${JSON.stringify(input.commonMistakes || [])}::jsonb,
+      ${nullableString(input.safetyNotes)},
+      now()
+    )
+    on conflict (exercise_id) do update set
+      instruction_image_url = excluded.instruction_image_url,
+      image_prompt = excluded.image_prompt,
+      steps = case when excluded.steps = '[]'::jsonb then exercise_instruction_assets.steps else excluded.steps end,
+      easier_version = coalesce(excluded.easier_version, exercise_instruction_assets.easier_version),
+      harder_version = coalesce(excluded.harder_version, exercise_instruction_assets.harder_version),
+      common_mistakes = case
+        when excluded.common_mistakes = '[]'::jsonb then exercise_instruction_assets.common_mistakes
+        else excluded.common_mistakes
+      end,
+      safety_notes = case
+        when excluded.safety_notes = '[]'::jsonb then exercise_instruction_assets.safety_notes
+        else excluded.safety_notes
+      end,
+      updated_at = now()
+    returning
+      exercise_id,
+      instruction_image_url,
+      image_prompt,
+      steps,
+      easier_version,
+      harder_version,
+      common_mistakes,
+      safety_notes,
+      updated_at::text
+  `) as Array<Record<string, unknown>>;
+
+  return rows[0];
+}
+
 async function ensureSharedWorkoutInviteTable() {
   const sql = getSql();
   await sql`create table if not exists shared_workout_invites (

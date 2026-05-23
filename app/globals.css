@@ -1111,6 +1111,21 @@ body:has(.workout-player-dialog[open]) {
   padding: 20px;
 }
 
+.instruction-placeholder {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+}
+
+.instruction-status {
+  margin-bottom: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+
 .instruction-visual img {
   max-width: 100%;
   max-height: 280px;
