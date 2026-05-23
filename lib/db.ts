@@ -298,7 +298,7 @@ export async function saveExerciseInstructionImage(input: {
       ${nullableString(input.easierVersion)},
       ${nullableString(input.harderVersion)},
       ${JSON.stringify(input.commonMistakes || [])}::jsonb,
-      ${nullableString(input.safetyNotes)},
+      ${JSON.stringify(input.safetyNotes || [])}::jsonb,
       now()
     )
     on conflict (exercise_id) do update set
