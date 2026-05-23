@@ -1,4 +1,5 @@
 const STORAGE_KEY = "remitrainer_household_v2";
+const EXERCISE_CATALOG_URL = "/api/exercise-catalog";
 
 const focusLabels = {
   "full-body": "Full body",
@@ -258,7 +259,7 @@ const dataModelSchema = {
   ],
 };
 
-const exerciseLibrary = [
+let exerciseLibrary = [
   exercise({
     id: "wall_pushup",
     name: "Wall push-up",
@@ -800,8 +801,7 @@ const controls = {
   sharedWorkoutContent: document.querySelector("#shared-workout-content"),
 };
 
-let state = loadState();
-syncExerciseInstructionAssetsToLibrary();
+let state = createDefaultState();
 let currentDataTab = "context";
 let currentAppTab = "workout";
 let activeProfileId = controls.activeProfile?.value || controls.appShell?.dataset.selectedProfile || "jeanne";
@@ -818,12 +818,41 @@ let sharedWorkoutDialogState = null;
 let cloudSyncTimer = null;
 let isApplyingCloudState = false;
 let hasLoadedCloudState = false;
-let activeSessionId = state.shared_workout_sessions.at(-1)?.id || null;
-let lastStrictJson = activeSessionId ? getSession(activeSessionId)?.original_ai_response || null : null;
+let activeSessionId = null;
+let lastStrictJson = null;
 
-renderApp();
-bindEvents();
-syncStateFromCloud();
+initializeApp();
+
+async function initializeApp() {
+  await loadExerciseCatalog();
+  state = loadState();
+  syncExerciseInstructionAssetsToLibrary();
+  activeSessionId = state.shared_workout_sessions.at(-1)?.id || null;
+  lastStrictJson = activeSessionId ? getSession(activeSessionId)?.original_ai_response || null : null;
+
+  renderApp();
+  bindEvents();
+  syncStateFromCloud();
+}
+
+async function loadExerciseCatalog() {
+  if (!window.location.origin.startsWith("http")) return;
+
+  try {
+    const response = await fetch(EXERCISE_CATALOG_URL);
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    const importedExercises = Array.isArray(payload.exercises)
+      ? payload.exercises.map(normalizeCatalogExercise).filter(Boolean)
+      : [];
+    if (!importedExercises.length) return;
+
+    exerciseLibrary = mergeById(exerciseLibrary, importedExercises, "id");
+  } catch (error) {
+    console.info("Exercise catalog unavailable; using bundled fallback catalog.", error);
+  }
+}
 
 function bindEvents() {
   controls.appTabs.forEach((button) => {
@@ -3038,6 +3067,38 @@ function getExercise(exerciseId) {
   return asset ? applyInstructionAsset(item, asset) : item;
 }
 
+function normalizeCatalogExercise(record) {
+  const idValue = String(record.id || "").trim();
+  const nameValue = String(record.name || "").trim();
+  const patternValue = String(record.movement_pattern || record.pattern || "").trim();
+  if (!idValue || !nameValue || !patternValue) return null;
+
+  return {
+    id: idValue,
+    source: record.source || "remitrainer",
+    source_id: record.source_id || idValue,
+    source_license: record.source_license || "",
+    source_url: record.source_url || "",
+    name: nameValue,
+    movement_pattern: patternValue,
+    focus_tags: asStringArray(record.focus_tags || record.focus),
+    required_equipment: asStringArray(record.required_equipment || record.equipment),
+    difficulty: clamp(Number(record.difficulty || 1), 1, 3),
+    avoid_if: asStringArray(record.avoid_if || record.avoidIf),
+    instruction_image_url: String(record.instruction_image_url || record.instructionImageUrl || ""),
+    image_prompt:
+      String(record.image_prompt || record.imagePrompt || "") ||
+      `Clean instructional fitness illustration for ${nameValue}, neutral background, show start and finish positions, no text.`,
+    steps: asStringArray(record.steps),
+    easier_version: String(record.easier_version || record.easier || ""),
+    harder_version: String(record.harder_version || record.harder || ""),
+    common_mistakes: asStringArray(record.common_mistakes || record.mistakes),
+    safety_notes: asStringArray(record.safety_notes || record.safety),
+    source_image_urls: asStringArray(record.source_image_urls),
+    progression_group: String(record.progression_group || patternValue),
+  };
+}
+
 function syncExerciseInstructionAssetsToLibrary() {
   const assets = new Map(
     (state.exercise_instruction_assets || [])
@@ -3162,10 +3223,32 @@ function loadState() {
     if (!raw) return createDefaultState();
     const parsed = JSON.parse(raw);
     if (parsed.version !== 2) return createDefaultState();
-    return parsed;
+    return normalizeLoadedState(parsed);
   } catch {
     return createDefaultState();
   }
+}
+
+function normalizeLoadedState(savedState) {
+  const defaults = createDefaultState();
+  return {
+    ...defaults,
+    ...savedState,
+    household: savedState.household || defaults.household,
+    profiles: savedState.profiles?.length ? savedState.profiles : defaults.profiles,
+    household_equipment: mergeById(defaults.household_equipment, savedState.household_equipment || [], "equipment_id"),
+    profile_limitations: savedState.profile_limitations || defaults.profile_limitations,
+    profile_banned_exercises: savedState.profile_banned_exercises || [],
+    shared_workout_sessions: savedState.shared_workout_sessions || [],
+    user_workout_instances: savedState.user_workout_instances || [],
+    workout_exercise_instances: savedState.workout_exercise_instances || [],
+    exercise_feedback: savedState.exercise_feedback || [],
+    exercise_instruction_assets: mergeById(
+      defaults.exercise_instruction_assets,
+      savedState.exercise_instruction_assets || [],
+      "exercise_id",
+    ),
+  };
 }
 
 function createDefaultState() {
@@ -3290,6 +3373,11 @@ function splitList(value) {
     .split(/[,;\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function asStringArray(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+  return splitList(value);
 }
 
 function unique(items) {
