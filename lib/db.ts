@@ -331,6 +331,29 @@ export async function saveExerciseInstructionImage(input: {
   return rows[0];
 }
 
+export async function getExerciseInstructionAsset(exerciseId: string) {
+  const sql = getSql();
+  const rows = (await sql`
+    select
+      exercise_id,
+      instruction_image_url,
+      image_prompt,
+      steps,
+      easier_version,
+      harder_version,
+      common_mistakes,
+      safety_notes,
+      updated_at::text
+    from exercise_instruction_assets
+    where exercise_id = ${exerciseId}
+      and instruction_image_url is not null
+      and instruction_image_url <> ''
+    limit 1
+  `) as Array<Record<string, unknown>>;
+
+  return rows[0] || null;
+}
+
 async function ensureSharedWorkoutInviteTable() {
   const sql = getSql();
   await sql`create table if not exists shared_workout_invites (

@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { put } from "@vercel/blob";
 import { z } from "zod";
 import { getSessionFromRequest } from "@/lib/auth";
-import { hasDatabaseUrl, saveExerciseInstructionImage } from "@/lib/db";
+import { getExerciseInstructionAsset, hasDatabaseUrl, saveExerciseInstructionImage } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -38,14 +38,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json({ error: "OPENAI_API_KEY is not configured." }, { status: 501 });
-  }
-
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return NextResponse.json({ error: "BLOB_READ_WRITE_TOKEN is not configured." }, { status: 501 });
-  }
-
   if (!hasDatabaseUrl()) {
     return NextResponse.json({ error: "DATABASE_URL is not configured." }, { status: 501 });
   }
@@ -67,6 +59,25 @@ export async function POST(request: NextRequest) {
   const imageModel = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 
   try {
+    const existingAsset = await getExerciseInstructionAsset(input.exercise_id);
+    const existingImageUrl = String(existingAsset?.instruction_image_url || "");
+    if (existingImageUrl) {
+      return NextResponse.json({
+        exercise_id: input.exercise_id,
+        instruction_image_url: existingImageUrl,
+        source: "existing",
+        asset: existingAsset,
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: "OPENAI_API_KEY is not configured." }, { status: 501 });
+    }
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json({ error: "BLOB_READ_WRITE_TOKEN is not configured." }, { status: 501 });
+    }
+
     const client = getOpenAI();
     const prompt = [
       input.image_prompt,
@@ -114,6 +125,7 @@ export async function POST(request: NextRequest) {
       exercise_id: input.exercise_id,
       instruction_image_url: blob.url,
       image_model: imageModel,
+      source: "generated",
       asset,
     });
   } catch (error) {
