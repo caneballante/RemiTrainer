@@ -153,9 +153,10 @@ export default async function Home({ searchParams }: HomeProps) {
                   <input id="household-join" type="checkbox" />
                   <span className="switch-track" aria-hidden="true"></span>
                   <span>
-                    <strong id="join-profile-name">Other person</strong> joins
+                    Include <strong id="join-profile-name">other person</strong>
                   </span>
                 </label>
+                <small className="field-note">Generate once for both people.</small>
                 <select id="participants" name="participants" defaultValue={session.profileId} hidden aria-hidden="true">
                   <option value="all">Everyone available</option>
                   <option value="jon">Jon only</option>
@@ -177,9 +178,14 @@ export default async function Home({ searchParams }: HomeProps) {
               </label>
             </div>
 
-            <button id="generate-button" className="primary-action" type="submit">
-              Spin up fresh workout
-            </button>
+            <div className="request-actions">
+              <button id="generate-button" className="primary-action" type="submit">
+                Generate solo workout
+              </button>
+              <button id="check-shared-workout" className="ghost-action" type="button">
+                Check for shared workout
+              </button>
+            </div>
           </form>
         </section>
 
@@ -268,6 +274,10 @@ export default async function Home({ searchParams }: HomeProps) {
 
       <dialog id="workout-player-dialog" className="workout-player-dialog">
         <div id="workout-player-content"></div>
+      </dialog>
+
+      <dialog id="shared-workout-dialog" className="shared-workout-dialog">
+        <div id="shared-workout-content"></div>
       </dialog>
 
       <Script src="/remitrainer-app.js" strategy="afterInteractive" />

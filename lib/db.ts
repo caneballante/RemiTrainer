@@ -53,6 +53,12 @@ type HouseholdState = {
   exercise_instruction_assets?: Array<Record<string, unknown>>;
 };
 
+type SharedWorkoutInviteInput = {
+  sessionId: string;
+  fromProfileId: string;
+  toProfileId: string;
+};
+
 export async function saveWorkoutToDatabase(input: SaveWorkoutInput) {
   const sql = getSql();
   const household = (input.compactContext.household || {}) as { id?: string; name?: string };
@@ -156,6 +162,126 @@ export async function saveWorkoutToDatabase(input: SaveWorkoutInput) {
   }
 
   return { sessionId };
+}
+
+export async function createSharedWorkoutInvite(input: SharedWorkoutInviteInput) {
+  const sql = getSql();
+  await ensureSharedWorkoutInviteTable();
+
+  const inviteId = `invite_${crypto.randomUUID()}`;
+  const rows = (await sql`
+    insert into shared_workout_invites (
+      id,
+      shared_workout_session_id,
+      from_profile_id,
+      to_profile_id,
+      status,
+      created_at,
+      opened_at,
+      dismissed_at
+    )
+    values (
+      ${inviteId},
+      ${input.sessionId},
+      ${input.fromProfileId},
+      ${input.toProfileId},
+      'pending',
+      now(),
+      null,
+      null
+    )
+    on conflict (shared_workout_session_id, to_profile_id) do update set
+      from_profile_id = excluded.from_profile_id,
+      status = 'pending',
+      created_at = now(),
+      opened_at = null,
+      dismissed_at = null
+    returning
+      id,
+      shared_workout_session_id,
+      from_profile_id,
+      to_profile_id,
+      status,
+      created_at::text,
+      opened_at::text,
+      dismissed_at::text
+  `) as Array<Record<string, unknown>>;
+
+  return rows[0];
+}
+
+export async function getPendingSharedWorkoutInvites(profileId: string) {
+  const sql = getSql();
+  await ensureSharedWorkoutInviteTable();
+
+  return (await sql`
+    select
+      i.id,
+      i.shared_workout_session_id,
+      i.from_profile_id,
+      from_profile.name as from_profile_name,
+      i.to_profile_id,
+      to_profile.name as to_profile_name,
+      i.status,
+      i.created_at::text,
+      i.opened_at::text,
+      i.dismissed_at::text,
+      s.requested_at::text,
+      s.parent_workout_plan ->> 'title' as workout_title,
+      s.parent_workout_plan ->> 'workout_size' as workout_size
+    from shared_workout_invites i
+    join shared_workout_sessions s on s.id = i.shared_workout_session_id
+    join profiles from_profile on from_profile.id = i.from_profile_id
+    join profiles to_profile on to_profile.id = i.to_profile_id
+    where i.to_profile_id = ${profileId}
+      and i.status = 'pending'
+    order by i.created_at desc
+    limit 5
+  `) as Array<Record<string, unknown>>;
+}
+
+export async function markSharedWorkoutInvite(inviteId: string, profileId: string, status: "opened" | "dismissed") {
+  const sql = getSql();
+  await ensureSharedWorkoutInviteTable();
+
+  const rows = (await sql`
+    update shared_workout_invites
+    set
+      status = ${status},
+      opened_at = case when ${status} = 'opened' then now() else opened_at end,
+      dismissed_at = case when ${status} = 'dismissed' then now() else dismissed_at end
+    where id = ${inviteId}
+      and to_profile_id = ${profileId}
+    returning
+      id,
+      shared_workout_session_id,
+      from_profile_id,
+      to_profile_id,
+      status,
+      created_at::text,
+      opened_at::text,
+      dismissed_at::text
+  `) as Array<Record<string, unknown>>;
+
+  return rows[0] || null;
+}
+
+async function ensureSharedWorkoutInviteTable() {
+  const sql = getSql();
+  await sql`create table if not exists shared_workout_invites (
+    id text primary key,
+    shared_workout_session_id text not null references shared_workout_sessions(id) on delete cascade,
+    from_profile_id text not null references profiles(id) on delete cascade,
+    to_profile_id text not null references profiles(id) on delete cascade,
+    status text not null default 'pending',
+    created_at timestamptz not null default now(),
+    opened_at timestamptz,
+    dismissed_at timestamptz,
+    unique (shared_workout_session_id, to_profile_id)
+  )`;
+
+  await sql`create index if not exists shared_workout_invites_to_status_idx
+    on shared_workout_invites (to_profile_id, status, created_at desc)`;
 }
 
 export async function loadHouseholdState(householdId = DEFAULT_HOUSEHOLD_ID) {

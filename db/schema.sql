@@ -64,6 +64,18 @@ create table if not exists shared_workout_sessions (
   source text not null default 'openai'
 );
 
+create table if not exists shared_workout_invites (
+  id text primary key,
+  shared_workout_session_id text not null references shared_workout_sessions(id) on delete cascade,
+  from_profile_id text not null references profiles(id) on delete cascade,
+  to_profile_id text not null references profiles(id) on delete cascade,
+  status text not null default 'pending',
+  created_at timestamptz not null default now(),
+  opened_at timestamptz,
+  dismissed_at timestamptz,
+  unique (shared_workout_session_id, to_profile_id)
+);
+
 create table if not exists user_workout_instances (
   id text primary key,
   shared_workout_session_id text not null references shared_workout_sessions(id) on delete cascade,
@@ -118,6 +130,9 @@ create table if not exists exercise_instruction_assets (
 
 create index if not exists shared_workout_sessions_household_requested_idx
   on shared_workout_sessions (household_id, requested_at desc);
+
+create index if not exists shared_workout_invites_to_status_idx
+  on shared_workout_invites (to_profile_id, status, created_at desc);
 
 create index if not exists workout_exercise_instances_profile_pattern_idx
   on workout_exercise_instances (profile_id, movement_pattern);

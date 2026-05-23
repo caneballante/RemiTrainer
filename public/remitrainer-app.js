@@ -205,6 +205,16 @@ const dataModelSchema = {
     "original_ai_response",
     "final_validated_workout",
   ],
+  shared_workout_invites: [
+    "id",
+    "shared_workout_session_id",
+    "from_profile_id",
+    "to_profile_id",
+    "status",
+    "created_at",
+    "opened_at",
+    "dismissed_at",
+  ],
   user_workout_instances: [
     "id",
     "shared_workout_session_id",
@@ -772,6 +782,7 @@ const controls = {
   warmup: document.querySelector("#warmup"),
   cooldown: document.querySelector("#cooldown"),
   generateButton: document.querySelector("#generate-button"),
+  checkSharedWorkout: document.querySelector("#check-shared-workout"),
   resetDemo: document.querySelector("#reset-demo"),
   profiles: document.querySelector("#profiles"),
   equipmentList: document.querySelector("#equipment-list"),
@@ -785,6 +796,8 @@ const controls = {
   profileGuideContent: document.querySelector("#profile-guide-content"),
   workoutPlayerDialog: document.querySelector("#workout-player-dialog"),
   workoutPlayerContent: document.querySelector("#workout-player-content"),
+  sharedWorkoutDialog: document.querySelector("#shared-workout-dialog"),
+  sharedWorkoutContent: document.querySelector("#shared-workout-content"),
 };
 
 let state = loadState();
@@ -799,6 +812,7 @@ let workoutPlayer = {
   showFinish: false,
   touchStartX: 0,
 };
+let sharedWorkoutDialogState = null;
 let cloudSyncTimer = null;
 let isApplyingCloudState = false;
 let hasLoadedCloudState = false;
@@ -824,6 +838,7 @@ function bindEvents() {
   controls.form.addEventListener("input", updateRequestSummary);
 
   controls.householdJoin.addEventListener("change", updateRequestSummary);
+  controls.checkSharedWorkout.addEventListener("click", checkForSharedWorkout);
 
   controls.radios.forEach((radio) => {
     radio.addEventListener("change", () => {
@@ -941,6 +956,16 @@ function bindEvents() {
     resetWorkoutPlayer();
   });
 
+  controls.sharedWorkoutDialog.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-shared-action]")?.dataset.sharedAction;
+    if (!action) return;
+    handleSharedWorkoutDialogAction(action);
+  });
+
+  controls.sharedWorkoutDialog.addEventListener("close", () => {
+    sharedWorkoutDialogState = null;
+  });
+
   controls.workoutPlayerDialog.addEventListener(
     "touchstart",
     (event) => {
@@ -998,7 +1023,7 @@ function syncActiveProfile() {
   const activeProfile = getActiveProfile();
   const otherProfile = getOtherProfile();
   document.querySelector("#active-profile-name").textContent = activeProfile?.name || "Household member";
-  controls.joinProfileName.textContent = otherProfile?.name || "Other person";
+  controls.joinProfileName.textContent = otherProfile?.name || "other person";
   controls.participants.value = controls.householdJoin.checked ? "all" : activeProfileId;
 }
 
@@ -1024,6 +1049,7 @@ function updateRequestSummary() {
   document.querySelector("#exercise-count").textContent = request.count;
   document.querySelector("#participant-count").textContent = participantCount;
   document.querySelector("#participant-label").textContent = participantCount === 1 ? "person" : "people";
+  controls.generateButton.textContent = request.participant_mode === "all" ? "Generate shared workout" : "Generate solo workout";
 }
 
 async function spinUpWorkout() {
@@ -1047,12 +1073,15 @@ async function spinUpWorkout() {
     activeSessionId = saved.session.id;
     lastStrictJson = saved.session.original_ai_response;
     renderApp();
+    if (request.participant_mode === "all") {
+      openSharedWorkoutReadyDialog(saved.session.id);
+    }
   } catch (error) {
     console.error(error);
     controls.workoutOutput.innerHTML = `<p class="empty-state">Workout generation failed: ${escapeHtml(error.message)}</p>`;
   } finally {
     controls.generateButton.classList.remove("loading");
-    controls.generateButton.textContent = "Spin up fresh workout";
+    updateRequestSummary();
   }
 }
 
@@ -1081,7 +1110,7 @@ async function requestCloudWorkout(request, compactContext, parentPlan) {
   }
 }
 
-async function syncStateFromCloud() {
+async function syncStateFromCloud(options = {}) {
   if (!window.location.origin.startsWith("http")) return;
 
   try {
@@ -1100,19 +1129,228 @@ async function syncStateFromCloud() {
     if (cloudState && hasDurableCloudState(cloudState)) {
       isApplyingCloudState = true;
       state = mergeCloudState(cloudState);
-      activeSessionId = state.shared_workout_sessions.at(-1)?.id || null;
+      activeSessionId = options.activateSessionId && getSession(options.activateSessionId)
+        ? options.activateSessionId
+        : state.shared_workout_sessions.at(-1)?.id || null;
       lastStrictJson = activeSessionId ? getSession(activeSessionId)?.original_ai_response || null : null;
       saveState();
       renderApp();
       isApplyingCloudState = false;
-      return;
+      return true;
     }
 
     queueStateSync(50);
+    return false;
   } catch (error) {
     console.info("Cloud household state unavailable; keeping local state.", error);
+    return false;
   } finally {
     isApplyingCloudState = false;
+  }
+}
+
+function openSharedWorkoutReadyDialog(sessionId) {
+  const otherProfile = getOtherProfile();
+  const activeProfile = getActiveProfile();
+  sharedWorkoutDialogState = {
+    type: "ready",
+    sessionId,
+    toProfileId: otherProfile?.id,
+  };
+
+  controls.sharedWorkoutContent.innerHTML = `
+    <div class="shared-dialog-content">
+      <p class="eyebrow">Shared workout ready</p>
+      <h2>Send to ${escapeHtml(otherProfile?.name || "the other person")}?</h2>
+      <p class="subtle">
+        ${escapeHtml(activeProfile?.name || "You")} can start now. Sending creates an invite so ${escapeHtml(otherProfile?.name || "the other person")}
+        can tap Check for shared workout and open their version.
+      </p>
+      <div class="shared-dialog-actions">
+        <button class="ghost-action" type="button" data-shared-action="close">Not now</button>
+        <button class="ghost-action" type="button" data-shared-action="open-mine">Open mine</button>
+        <button class="primary-action" type="button" data-shared-action="send">Send to ${escapeHtml(otherProfile?.name || "other person")}</button>
+      </div>
+    </div>
+  `;
+  showSharedWorkoutDialog();
+}
+
+async function checkForSharedWorkout() {
+  controls.checkSharedWorkout.textContent = "Checking...";
+  controls.checkSharedWorkout.disabled = true;
+
+  try {
+    const response = await fetch("/api/shared-workout-invites");
+    if (!response.ok) {
+      showSharedWorkoutMessage("Could not check right now", "The app could not reach the shared workout invite endpoint.");
+      return;
+    }
+
+    const payload = await response.json();
+    const invite = payload.invites?.[0];
+    if (!invite) {
+      showSharedWorkoutMessage("No shared workout yet", "Ask the other person to tap Send after generating a shared workout.");
+      return;
+    }
+
+    openSharedWorkoutInviteDialog(invite);
+  } catch (error) {
+    console.info("Shared workout check failed.", error);
+    showSharedWorkoutMessage("Could not check right now", "Try again in a moment.");
+  } finally {
+    controls.checkSharedWorkout.textContent = "Check for shared workout";
+    controls.checkSharedWorkout.disabled = false;
+  }
+}
+
+function openSharedWorkoutInviteDialog(invite) {
+  sharedWorkoutDialogState = {
+    type: "invite",
+    invite,
+  };
+
+  const sender = invite.from_profile_name || profileName(invite.from_profile_id);
+  const workoutTitle = invite.workout_title || "Shared workout";
+  controls.sharedWorkoutContent.innerHTML = `
+    <div class="shared-dialog-content">
+      <p class="eyebrow">Shared workout</p>
+      <h2>${escapeHtml(sender)} sent a workout</h2>
+      <p class="subtle">${escapeHtml(workoutTitle)} is ready for your profile.</p>
+      <div class="shared-dialog-actions">
+        <button class="ghost-action" type="button" data-shared-action="close">Not now</button>
+        <button class="primary-action" type="button" data-shared-action="open-invite">Open shared workout</button>
+      </div>
+    </div>
+  `;
+  showSharedWorkoutDialog();
+}
+
+function showSharedWorkoutMessage(title, body) {
+  sharedWorkoutDialogState = { type: "message" };
+  controls.sharedWorkoutContent.innerHTML = `
+    <div class="shared-dialog-content">
+      <p class="eyebrow">Shared workout</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p class="subtle">${escapeHtml(body)}</p>
+      <div class="shared-dialog-actions">
+        <button class="primary-action" type="button" data-shared-action="close">OK</button>
+      </div>
+    </div>
+  `;
+  showSharedWorkoutDialog();
+}
+
+function showSharedWorkoutDialog() {
+  if (!controls.sharedWorkoutDialog.open) {
+    controls.sharedWorkoutDialog.showModal();
+  }
+}
+
+async function handleSharedWorkoutDialogAction(action) {
+  if (action === "close") {
+    controls.sharedWorkoutDialog.close();
+    return;
+  }
+
+  if (action === "open-mine") {
+    const sessionId = sharedWorkoutDialogState?.sessionId;
+    controls.sharedWorkoutDialog.close();
+    openOwnWorkout(sessionId);
+    return;
+  }
+
+  if (action === "send") {
+    await sendSharedWorkoutInvite();
+    return;
+  }
+
+  if (action === "open-invite") {
+    await openSharedWorkoutInvite();
+  }
+}
+
+async function sendSharedWorkoutInvite() {
+  const sessionId = sharedWorkoutDialogState?.sessionId;
+  const toProfileId = sharedWorkoutDialogState?.toProfileId;
+  const toProfile = state.profiles.find((profile) => profile.id === toProfileId);
+  if (!sessionId || !toProfileId) return;
+
+  await saveStateToCloud();
+
+  try {
+    const response = await fetch("/api/shared-workout-invites", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        shared_workout_session_id: sessionId,
+        to_profile_id: toProfileId,
+      }),
+    });
+
+    if (!response.ok) {
+      showSharedWorkoutMessage("Could not send it", "The workout is saved, but the invite could not be created.");
+      return;
+    }
+
+    controls.sharedWorkoutContent.innerHTML = `
+      <div class="shared-dialog-content">
+        <p class="eyebrow">Sent</p>
+        <h2>Sent to ${escapeHtml(toProfile?.name || "the other person")}</h2>
+        <p class="subtle">They can tap Check for shared workout and open their version.</p>
+        <div class="shared-dialog-actions">
+          <button class="ghost-action" type="button" data-shared-action="close">Close</button>
+          <button class="primary-action" type="button" data-shared-action="open-mine">Open mine</button>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.info("Shared workout send failed.", error);
+    showSharedWorkoutMessage("Could not send it", "Try again in a moment.");
+  }
+}
+
+async function openSharedWorkoutInvite() {
+  const invite = sharedWorkoutDialogState?.invite;
+  if (!invite) return;
+
+  try {
+    const response = await fetch("/api/shared-workout-invites", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        invite_id: invite.id,
+        status: "opened",
+      }),
+    });
+
+    if (!response.ok) {
+      showSharedWorkoutMessage("Could not open it", "The invite was found, but it could not be marked opened.");
+      return;
+    }
+
+    await syncStateFromCloud({ activateSessionId: invite.shared_workout_session_id });
+    controls.sharedWorkoutDialog.close();
+    openOwnWorkout(invite.shared_workout_session_id);
+  } catch (error) {
+    console.info("Shared workout open failed.", error);
+    showSharedWorkoutMessage("Could not open it", "Try again in a moment.");
+  }
+}
+
+function openOwnWorkout(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return;
+
+  activeSessionId = session.id;
+  renderActiveSession();
+  const instance = getVisibleInstances(session).find((item) => item.profile_id === activeProfileId) || getVisibleInstances(session)[0];
+  if (instance) {
+    openWorkoutPlayer(session.id, instance.id);
   }
 }
 

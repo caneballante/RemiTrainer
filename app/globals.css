@@ -253,6 +253,12 @@ h3 {
   margin-top: 24px;
 }
 
+.request-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 10px;
+}
+
 fieldset {
   min-width: 0;
   margin: 0;
@@ -269,6 +275,14 @@ legend,
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 740;
+}
+
+.field-note {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .size-grid {
@@ -762,13 +776,18 @@ legend,
   box-shadow: var(--shadow);
 }
 
-.profile-guide-dialog {
+.profile-guide-dialog,
+.shared-workout-dialog {
   width: min(560px, calc(100vw - 28px));
   border: 1px solid var(--line);
   background: var(--surface-strong);
   color: var(--ink);
   padding: 0;
   box-shadow: var(--shadow);
+}
+
+.shared-workout-dialog {
+  width: min(520px, calc(100vw - 28px));
 }
 
 .workout-player-dialog {
@@ -791,7 +810,8 @@ body:has(.workout-player-dialog[open]) {
   overflow: hidden;
 }
 
-.profile-guide-dialog::backdrop {
+.profile-guide-dialog::backdrop,
+.shared-workout-dialog::backdrop {
   background: rgba(28, 34, 31, 0.38);
 }
 
@@ -818,6 +838,23 @@ body:has(.workout-player-dialog[open]) {
   display: grid;
   gap: 18px;
   padding: clamp(18px, 4vw, 26px);
+}
+
+.shared-dialog-content {
+  display: grid;
+  gap: 16px;
+  padding: clamp(18px, 4vw, 26px);
+}
+
+.shared-dialog-content h2 {
+  margin-bottom: 0;
+}
+
+.shared-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .guide-header,
@@ -1128,6 +1165,15 @@ body:has(.workout-player-dialog[open]) {
   .summary-stats,
   .account-strip {
     justify-content: flex-start;
+  }
+
+  .request-actions,
+  .shared-dialog-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .shared-dialog-actions {
+    display: grid;
   }
 
   .size-grid,

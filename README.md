@@ -56,6 +56,8 @@ schema includes:
 - `GET /api/household/state` loads the shared household state from Neon after login.
 - `POST /api/household/state` saves profiles, equipment, generated sessions, feedback,
   bans, and instruction asset metadata to Neon.
+- `GET/POST/PATCH /api/shared-workout-invites` checks, sends, and opens manual
+  shared workout invites between Jon and Jeanne.
 - `POST /api/workouts/generate` requests strict JSON from OpenAI, saves the generated
   workout to Neon when `DATABASE_URL` is configured, and returns the validated workout.
 
