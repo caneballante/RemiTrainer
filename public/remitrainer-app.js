@@ -801,6 +801,7 @@ const controls = {
 };
 
 let state = loadState();
+syncExerciseInstructionAssetsToLibrary();
 let currentDataTab = "context";
 let currentAppTab = "workout";
 let activeProfileId = controls.activeProfile?.value || controls.appShell?.dataset.selectedProfile || "jeanne";
@@ -1012,6 +1013,7 @@ function bindEvents() {
 }
 
 function renderApp() {
+  syncExerciseInstructionAssetsToLibrary();
   syncActiveProfile();
   setActiveAppTab(currentAppTab, false);
   renderProfiles();
@@ -1368,6 +1370,7 @@ function hasDurableCloudState(cloudState) {
     cloudState.profile_banned_exercises,
     cloudState.shared_workout_sessions,
     cloudState.exercise_feedback,
+    cloudState.exercise_instruction_assets,
   ].some((items) => Array.isArray(items) && items.length);
 }
 
@@ -1443,6 +1446,7 @@ function toCloudState(currentState) {
 }
 
 function buildExerciseLibraryPayload() {
+  syncExerciseInstructionAssetsToLibrary();
   return exerciseLibrary.map((item) => ({
     id: item.id,
     name: item.name,
@@ -1647,7 +1651,9 @@ function validateGeneratedWorkout(originalAiResponse, request) {
       const invalidBan = banned.has(item.exercise_id);
       const invalidLimitation = conflictsWithLimitations(current, profile);
 
-      if (!invalidEquipment && !invalidBan && !invalidLimitation) return item;
+      if (!invalidEquipment && !invalidBan && !invalidLimitation) {
+        return attachInstructionFields(item, current);
+      }
 
       const replacement = selectExerciseForSlot(
         {
@@ -1662,7 +1668,7 @@ function validateGeneratedWorkout(originalAiResponse, request) {
         new Set([item.exercise_id]),
       );
 
-      return {
+      return attachInstructionFields({
         ...item,
         exercise_id: replacement.exercise.id,
         exercise_name: replacement.exercise.name,
@@ -1670,7 +1676,7 @@ function validateGeneratedWorkout(originalAiResponse, request) {
         substitution_reason: replacement.reason || "Validator replaced an unavailable or unsafe exercise.",
         instruction_image_url: replacement.exercise.instruction_image_url,
         image_prompt: replacement.exercise.image_prompt,
-      };
+      }, replacement.exercise);
     });
 
     return {
@@ -2660,6 +2666,8 @@ async function generateExerciseImage(exerciseId) {
       });
     }
     saveState();
+    syncExerciseInstructionAssetsToLibrary();
+    queueStateSync(50);
     renderInstructionDetail(item, "Illustration saved.");
   } catch (error) {
     console.info("Exercise image generation failed.", error);
@@ -3025,7 +3033,41 @@ function getSession(sessionId) {
 }
 
 function getExercise(exerciseId) {
-  return exerciseLibrary.find((item) => item.id === exerciseId) || exerciseLibrary[0];
+  const item = exerciseLibrary.find((exerciseItem) => exerciseItem.id === exerciseId) || exerciseLibrary[0];
+  const asset = state.exercise_instruction_assets.find((record) => record.exercise_id === item.id);
+  return asset ? applyInstructionAsset(item, asset) : item;
+}
+
+function syncExerciseInstructionAssetsToLibrary() {
+  const assets = new Map(
+    (state.exercise_instruction_assets || [])
+      .filter((asset) => asset.exercise_id)
+      .map((asset) => [asset.exercise_id, asset]),
+  );
+
+  exerciseLibrary.forEach((item) => {
+    const asset = assets.get(item.id);
+    if (asset) applyInstructionAsset(item, asset);
+  });
+}
+
+function applyInstructionAsset(item, asset) {
+  if (asset.instruction_image_url) item.instruction_image_url = String(asset.instruction_image_url);
+  if (asset.image_prompt) item.image_prompt = String(asset.image_prompt);
+  if (Array.isArray(asset.steps) && asset.steps.length) item.steps = asset.steps;
+  if (asset.easier_version) item.easier_version = String(asset.easier_version);
+  if (asset.harder_version) item.harder_version = String(asset.harder_version);
+  if (Array.isArray(asset.common_mistakes) && asset.common_mistakes.length) item.common_mistakes = asset.common_mistakes;
+  if (Array.isArray(asset.safety_notes) && asset.safety_notes.length) item.safety_notes = asset.safety_notes;
+  return item;
+}
+
+function attachInstructionFields(exerciseItem, libraryExercise) {
+  return {
+    ...exerciseItem,
+    instruction_image_url: exerciseItem.instruction_image_url || libraryExercise?.instruction_image_url || "",
+    image_prompt: exerciseItem.image_prompt || libraryExercise?.image_prompt || "",
+  };
 }
 
 function labelForEquipment(equipmentId) {
