@@ -2203,6 +2203,16 @@ function renderWorkoutPlayer() {
         <div><i style="width: ${progressPercent}%"></i></div>
       </div>
 
+      <div class="player-top-nav">
+        <button class="ghost-action" type="button" data-player-action="previous" ${workoutPlayer.index === 0 ? "disabled" : ""}>
+          Previous
+        </button>
+        <button class="detail-button" type="button" data-detail-exercise="${exerciseItem.exercise_id}">Visual instructions</button>
+        <button class="ghost-action" type="button" data-player-action="next">
+          ${workoutPlayer.index === exercises.length - 1 ? "Review" : "Next"}
+        </button>
+      </div>
+
       <section class="player-card" aria-live="polite">
         <div class="player-status-row">
           <span>${escapeHtml(labelForExerciseStatus(status))}</span>
@@ -2241,33 +2251,24 @@ function renderWorkoutPlayer() {
           data-player-feedback="complete"
           ${playerFeedbackDataset(session, instance, exerciseItem)}
         >Complete and next</button>
-        <div class="player-feedback-grid">
-          ${Object.entries(workoutPlayerFeedbackLabels)
-            .map(
-              ([rating, label]) => `
-                <button
-                  class="feedback-button"
-                  type="button"
-                  data-player-feedback="${rating}"
-                  ${playerFeedbackDataset(session, instance, exerciseItem)}
-                >${escapeHtml(label)}</button>
-              `,
-            )
-            .join("")}
-        </div>
+        <details class="player-feedback-details">
+          <summary>Exercise feedback</summary>
+          <div class="player-feedback-grid">
+            ${Object.entries(workoutPlayerFeedbackLabels)
+              .map(
+                ([rating, label]) => `
+                  <button
+                    class="feedback-button"
+                    type="button"
+                    data-player-feedback="${rating}"
+                    ${playerFeedbackDataset(session, instance, exerciseItem)}
+                  >${escapeHtml(label)}</button>
+                `,
+              )
+              .join("")}
+          </div>
+        </details>
       </section>
-
-      <footer class="player-footer">
-        <button class="detail-button" type="button" data-detail-exercise="${exerciseItem.exercise_id}">Visual instructions</button>
-        <div class="player-nav">
-          <button class="ghost-action" type="button" data-player-action="previous" ${workoutPlayer.index === 0 ? "disabled" : ""}>
-            Previous
-          </button>
-          <button class="ghost-action" type="button" data-player-action="next">
-            ${workoutPlayer.index === exercises.length - 1 ? "Review" : "Next"}
-          </button>
-        </div>
-      </footer>
     </div>
   `;
 }
