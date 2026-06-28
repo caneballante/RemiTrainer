@@ -1121,6 +1121,28 @@ body:has(.workout-player-dialog[open]) {
   gap: 12px;
 }
 
+.instruction-image-frame {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: min(100%, 560px);
+  margin: 0;
+}
+
+.instruction-image-actions {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: center;
+  gap: 10px;
+}
+
+.compact-field {
+  width: min(100%, 260px);
+  text-align: left;
+}
+
 .instruction-status {
   margin-bottom: 0;
   border: 1px solid var(--line);

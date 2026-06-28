@@ -950,6 +950,16 @@ function bindEvents() {
   });
 
   controls.instructionDetail.addEventListener("click", async (event) => {
+    const regenerateButton = event.target.closest("[data-regenerate-exercise-image]");
+    if (regenerateButton) {
+      const reason = controls.instructionDetail.querySelector("[data-image-rejection-reason]")?.value || "";
+      await generateExerciseImage(regenerateButton.dataset.regenerateExerciseImage, {
+        forceRegenerate: true,
+        rejectionReason: reason,
+      });
+      return;
+    }
+
     const button = event.target.closest("[data-generate-exercise-image]");
     if (!button) return;
     await generateExerciseImage(button.dataset.generateExerciseImage);
@@ -2681,7 +2691,25 @@ function openInstructionDetail(exerciseId) {
 
 function renderInstructionDetail(item, statusMessage = "") {
   const visual = item.instruction_image_url
-    ? `<img src="${escapeHtml(item.instruction_image_url)}" alt="${escapeHtml(item.name)} instruction" />`
+    ? `
+      <figure class="instruction-image-frame">
+        <img src="${escapeHtml(item.instruction_image_url)}" alt="${escapeHtml(item.name)} instruction" />
+        <figcaption class="instruction-image-actions">
+          <label class="field compact-field">
+            <span>Issue to fix</span>
+            <select data-image-rejection-reason>
+              <option value="missing, cropped, extra, or distorted arms or legs">Bad anatomy</option>
+              <option value="the exercise pose is unclear or hard to follow">Unclear pose</option>
+              <option value="the equipment is wrong, missing, or placed incorrectly">Wrong equipment</option>
+              <option value="the image is too cluttered or not clean enough for instruction">Too cluttered</option>
+            </select>
+          </label>
+          <button class="ghost-action compact-action" type="button" data-regenerate-exercise-image="${item.id}">
+            Regenerate clearer image
+          </button>
+        </figcaption>
+      </figure>
+    `
     : `
       <div class="instruction-placeholder">
         <strong>No image yet</strong>
@@ -2736,14 +2764,17 @@ function renderInstructionDetail(item, statusMessage = "") {
   `;
 }
 
-async function generateExerciseImage(exerciseId) {
+async function generateExerciseImage(exerciseId, options = {}) {
   const item = getExercise(exerciseId);
-  const button = controls.instructionDetail.querySelector("[data-generate-exercise-image]");
+  const button = controls.instructionDetail.querySelector("[data-generate-exercise-image], [data-regenerate-exercise-image]");
   if (button) {
     button.disabled = true;
-    button.textContent = "Generating...";
+    button.textContent = options.forceRegenerate ? "Regenerating..." : "Generating...";
   }
-  renderInstructionDetail(item, "Generating illustration. This can take a moment.");
+  renderInstructionDetail(
+    item,
+    options.forceRegenerate ? "Regenerating a clearer illustration. This can take a moment." : "Generating illustration. This can take a moment.",
+  );
 
   try {
     const response = await fetch("/api/exercise-images/generate", {
@@ -2760,6 +2791,8 @@ async function generateExerciseImage(exerciseId) {
         harder_version: item.harder_version,
         common_mistakes: item.common_mistakes,
         safety_notes: item.safety_notes,
+        force_regenerate: Boolean(options.forceRegenerate),
+        rejection_reason: options.rejectionReason || "",
       }),
     });
 
@@ -2791,7 +2824,7 @@ async function generateExerciseImage(exerciseId) {
     saveState();
     syncExerciseInstructionAssetsToLibrary();
     queueStateSync(50);
-    renderInstructionDetail(item, "Illustration saved.");
+    renderInstructionDetail(item, options.forceRegenerate ? "Replacement illustration saved." : "Illustration saved.");
   } catch (error) {
     console.info("Exercise image generation failed.", error);
     renderInstructionDetail(item, "Could not generate illustration. Try again later.");

@@ -16,6 +16,8 @@ const GenerateExerciseImageBody = z.object({
   harder_version: z.string().default(""),
   common_mistakes: z.array(z.string()).default([]),
   safety_notes: z.array(z.string()).default([]),
+  force_regenerate: z.boolean().default(false),
+  rejection_reason: z.string().max(300).default(""),
 });
 
 let openaiClient: OpenAI | null = null;
@@ -61,7 +63,7 @@ export async function POST(request: NextRequest) {
   try {
     const existingAsset = await getExerciseInstructionAsset(input.exercise_id);
     const existingImageUrl = String(existingAsset?.instruction_image_url || "");
-    if (existingImageUrl) {
+    if (existingImageUrl && !input.force_regenerate) {
       return NextResponse.json({
         exercise_id: input.exercise_id,
         instruction_image_url: existingImageUrl,
@@ -79,21 +81,13 @@ export async function POST(request: NextRequest) {
     }
 
     const client = getOpenAI();
-    const prompt = [
-      input.image_prompt,
-      "Style: clean instructional fitness illustration, neutral background, no text, no logos.",
-      "Show safe start and finish positions when possible. Avoid photorealistic nudity or medical diagrams.",
-      `Exercise name: ${input.exercise_name}.`,
-      input.steps.length ? `Key steps: ${input.steps.join(" ")}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const prompt = buildInstructionImagePrompt(input);
 
     const result = await client.images.generate({
       model: imageModel,
       prompt,
       size: "1024x1024",
-      quality: "medium",
+      quality: "high",
       output_format: "webp",
     });
 
@@ -125,6 +119,7 @@ export async function POST(request: NextRequest) {
       exercise_id: input.exercise_id,
       instruction_image_url: blob.url,
       image_model: imageModel,
+      image_quality: "high",
       source: "generated",
       asset,
     });
@@ -136,4 +131,27 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+function buildInstructionImagePrompt(input: z.infer<typeof GenerateExerciseImageBody>) {
+  return [
+    input.image_prompt,
+    `Exercise name: ${input.exercise_name}.`,
+    "Create a clear instructional fitness illustration of one adult human demonstrating this exercise.",
+    "Use a simple medical-fitness illustration style, not photorealistic.",
+    "Show the full body in frame from head to feet. Keep all visible limbs complete and uncropped.",
+    "Every visible human figure must have correct anatomy: exactly two arms, exactly two legs, natural shoulders, elbows, wrists, hips, knees, ankles, hands, and feet.",
+    "Avoid missing limbs, extra limbs, fused limbs, distorted hands, distorted feet, twisted joints, or impossible body positions.",
+    "Use one pose when that is clearest, or two clean side-by-side poses for start and finish positions when useful.",
+    "Neutral plain background. No text, labels, logos, watermarks, arrows, callouts, or UI.",
+    "Prioritize posture clarity, safe joint alignment, and correct equipment placement over artistic style.",
+    input.steps.length ? `Key steps:\n${input.steps.map((step, index) => `${index + 1}. ${step}`).join("\n")}` : "",
+    input.common_mistakes.length ? `Avoid showing these mistakes: ${input.common_mistakes.join("; ")}.` : "",
+    input.safety_notes.length ? `Safety constraints: ${input.safety_notes.join("; ")}.` : "",
+    input.rejection_reason
+      ? `The previous image was rejected because: ${input.rejection_reason}. Generate a new, clearer version that fixes that issue.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
