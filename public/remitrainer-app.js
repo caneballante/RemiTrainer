@@ -2197,10 +2197,15 @@ function openWorkoutPlayer(sessionId, instanceId) {
   if (!session || !instance || !instance.exercises.length) return;
 
   const firstOpenIndex = instance.exercises.findIndex((exerciseItem) => !isExerciseAddressed(exerciseItem));
+  const steps = buildWorkoutPlayerSteps(instance);
+  const firstOpenStepIndex =
+    firstOpenIndex >= 0
+      ? steps.findIndex((step) => step.type === "exercise" && step.item.id === instance.exercises[firstOpenIndex].id)
+      : -1;
   workoutPlayer = {
     sessionId,
     instanceId,
-    index: firstOpenIndex >= 0 ? firstOpenIndex : 0,
+    index: firstOpenIndex === 0 ? 0 : firstOpenStepIndex >= 0 ? firstOpenStepIndex : 0,
     showFinish: firstOpenIndex < 0,
     touchStartX: 0,
   };
@@ -2215,7 +2220,7 @@ function renderWorkoutPlayer() {
     return;
   }
 
-  const { session, instance, profile, exercises } = context;
+  const { session, instance, profile, steps } = context;
   const summary = buildWorkoutPlayerSummary(instance);
 
   if (workoutPlayer.showFinish) {
@@ -2223,12 +2228,18 @@ function renderWorkoutPlayer() {
     return;
   }
 
-  const exerciseItem = exercises[workoutPlayer.index];
+  const currentStep = steps[workoutPlayer.index];
+  if (currentStep.type !== "exercise") {
+    controls.workoutPlayerContent.innerHTML = renderWorkoutPrepStep(session, profile, currentStep, steps);
+    return;
+  }
+
+  const exerciseItem = currentStep.item;
   const feedback = state.exercise_feedback.filter((item) => item.workout_exercise_instance_id === exerciseItem.id);
   const lastFeedback = feedback.at(-1)?.rating;
   const status = getExerciseStatus(exerciseItem);
   const equipment = exerciseItem.required_equipment.map(labelForEquipment).join(", ");
-  const progressPercent = Math.round(((workoutPlayer.index + 1) / exercises.length) * 100);
+  const progressPercent = Math.round(((workoutPlayer.index + 1) / steps.length) * 100);
 
   controls.workoutPlayerContent.innerHTML = `
     <div class="player-shell">
@@ -2241,7 +2252,7 @@ function renderWorkoutPlayer() {
       </header>
 
       <div class="player-progress">
-        <span>${workoutPlayer.index + 1} of ${exercises.length}</span>
+        <span>${workoutPlayer.index + 1} of ${steps.length}</span>
         <div><i style="width: ${progressPercent}%"></i></div>
       </div>
 
@@ -2251,7 +2262,7 @@ function renderWorkoutPlayer() {
         </button>
         <button class="detail-button" type="button" data-detail-exercise="${exerciseItem.exercise_id}">Visual instructions</button>
         <button class="ghost-action" type="button" data-player-action="next">
-          ${workoutPlayer.index === exercises.length - 1 ? "Review" : "Next"}
+          ${workoutPlayer.index === steps.length - 1 ? "Review" : "Next"}
         </button>
       </div>
 
@@ -2315,6 +2326,66 @@ function renderWorkoutPlayer() {
   `;
 }
 
+function renderWorkoutPrepStep(session, profile, step, steps) {
+  const prepItem = step.item;
+  const exerciseItem = getExercise(prepItem.exercise_id);
+  const movementLabel = movementPatternLabels[prepItem.movement_pattern || exerciseItem.movement_pattern] || step.phase;
+  const progressPercent = Math.round(((workoutPlayer.index + 1) / steps.length) * 100);
+  const isLastStep = workoutPlayer.index === steps.length - 1;
+
+  return `
+    <div class="player-shell">
+      <header class="player-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(profile.name)} workout</p>
+          <h2>${escapeHtml(session.parent_workout_plan.title)}</h2>
+        </div>
+        <button class="ghost-action" type="button" data-player-action="close">Close</button>
+      </header>
+
+      <div class="player-progress">
+        <span>${workoutPlayer.index + 1} of ${steps.length}</span>
+        <div><i style="width: ${progressPercent}%"></i></div>
+      </div>
+
+      <div class="player-top-nav">
+        <button class="ghost-action" type="button" data-player-action="previous" ${workoutPlayer.index === 0 ? "disabled" : ""}>
+          Previous
+        </button>
+        <button class="detail-button" type="button" data-detail-exercise="${prepItem.exercise_id}">Visual instructions</button>
+        <button class="ghost-action" type="button" data-player-action="next">
+          ${isLastStep ? "Review" : "Next"}
+        </button>
+      </div>
+
+      <section class="player-card player-prep-card" aria-live="polite">
+        <div class="player-status-row">
+          <span>${escapeHtml(step.phase)}</span>
+        </div>
+        <div>
+          <p class="eyebrow">${escapeHtml(movementLabel)}</p>
+          <h1>${escapeHtml(prepItem.name)}</h1>
+          <p class="player-note">${escapeHtml(step.note)}</p>
+        </div>
+        <div class="player-dose-grid">
+          <div>
+            <span>Dose</span>
+            <strong>${escapeHtml(prepItem.dose)}</strong>
+          </div>
+          <div>
+            <span>Equipment</span>
+            <strong>${escapeHtml(exerciseItem.required_equipment.map(labelForEquipment).join(", ") || "None")}</strong>
+          </div>
+        </div>
+      </section>
+
+      <footer class="player-footer">
+        <button class="ghost-action" type="button" data-player-action="next">${isLastStep ? "Review workout" : "Done and next"}</button>
+      </footer>
+    </div>
+  `;
+}
+
 function renderWorkoutFinish(session, instance, profile, summary) {
   const flagged = [
     summary.skipped ? `${summary.skipped} skipped` : "",
@@ -2372,7 +2443,7 @@ function handleWorkoutPlayerFeedback(button) {
   if (!context || !feedback) return;
 
   const terminalRating = addressedRatings.has(feedback.rating);
-  if (terminalRating && workoutPlayer.index < context.exercises.length - 1) {
+  if (terminalRating && workoutPlayer.index < context.steps.length - 1) {
     workoutPlayer.index += 1;
   } else if (terminalRating && areAllExercisesAddressed(context.instance)) {
     workoutPlayer.showFinish = true;
@@ -2414,7 +2485,7 @@ function moveWorkoutPlayer(direction) {
   const nextIndex = workoutPlayer.index + direction;
   if (nextIndex < 0) return;
 
-  if (nextIndex >= context.exercises.length) {
+  if (nextIndex >= context.steps.length) {
     if (areAllExercisesAddressed(context.instance)) {
       workoutPlayer.showFinish = true;
       renderWorkoutPlayer();
@@ -2451,9 +2522,32 @@ function getWorkoutPlayerContext() {
   const profile = state.profiles.find((item) => item.id === instance.profile_id) || { name: instance.profile_id };
   const exercises = instance.exercises || [];
   if (!exercises.length) return null;
+  const steps = buildWorkoutPlayerSteps(instance);
 
-  workoutPlayer.index = clamp(workoutPlayer.index, 0, exercises.length - 1);
-  return { session, instance, profile, exercises };
+  workoutPlayer.index = clamp(workoutPlayer.index, 0, steps.length - 1);
+  return { session, instance, profile, exercises, steps };
+}
+
+function buildWorkoutPlayerSteps(instance) {
+  const warmup = (instance.warmup || []).map((item) => ({
+    type: "warmup",
+    phase: "Warmup",
+    note: "Move gently and use this to check how your body feels before the working sets.",
+    item,
+  }));
+  const exercises = (instance.exercises || []).map((item) => ({
+    type: "exercise",
+    phase: "Workout",
+    item,
+  }));
+  const cooldown = (instance.cooldown || []).map((item) => ({
+    type: "cooldown",
+    phase: "Cooldown",
+    note: "Ease out of the session with calm breathing and pain-free range.",
+    item,
+  }));
+
+  return [...warmup, ...exercises, ...cooldown];
 }
 
 function buildWorkoutPlayerSummary(instance) {

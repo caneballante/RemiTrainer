@@ -996,6 +996,10 @@ body:has(.workout-player-dialog[open]) {
   line-height: 0.95;
 }
 
+.player-prep-card h1 {
+  max-width: 16ch;
+}
+
 .player-note,
 .player-subtle {
   max-width: 64ch;
