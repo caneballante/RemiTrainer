@@ -799,6 +799,14 @@ const controls = {
   workoutPlayerContent: document.querySelector("#workout-player-content"),
   sharedWorkoutDialog: document.querySelector("#shared-workout-dialog"),
   sharedWorkoutContent: document.querySelector("#shared-workout-content"),
+  openTimer: document.querySelector("#open-timer"),
+  timerDialog: document.querySelector("#timer-dialog"),
+  closeTimer: document.querySelector("#close-timer"),
+  timerPill: document.querySelector("#timer-pill"),
+  timerDisplay: document.querySelector("#timer-display"),
+  timerStart: document.querySelector("#timer-start"),
+  timerStop: document.querySelector("#timer-stop"),
+  timerReset: document.querySelector("#timer-reset"),
 };
 
 let state = createDefaultState();
@@ -820,6 +828,11 @@ let isApplyingCloudState = false;
 let hasLoadedCloudState = false;
 let activeSessionId = null;
 let lastStrictJson = null;
+let workoutTimer = {
+  elapsedMs: 0,
+  startedAt: null,
+  intervalId: null,
+};
 
 initializeApp();
 
@@ -1013,6 +1026,12 @@ function bindEvents() {
     sharedWorkoutDialogState = null;
   });
 
+  controls.openTimer.addEventListener("click", openTimerDialog);
+  controls.closeTimer.addEventListener("click", () => controls.timerDialog.close());
+  controls.timerStart.addEventListener("click", startWorkoutTimer);
+  controls.timerStop.addEventListener("click", stopWorkoutTimer);
+  controls.timerReset.addEventListener("click", resetWorkoutTimer);
+
   controls.workoutPlayerDialog.addEventListener(
     "touchstart",
     (event) => {
@@ -1051,6 +1070,64 @@ function bindEvents() {
   });
 }
 
+function openTimerDialog() {
+  renderWorkoutTimer();
+  if (!controls.timerDialog.open) {
+    controls.timerDialog.showModal();
+  }
+}
+
+function startWorkoutTimer() {
+  if (workoutTimer.startedAt) return;
+
+  workoutTimer.startedAt = Date.now();
+  workoutTimer.intervalId = window.setInterval(renderWorkoutTimer, 250);
+  renderWorkoutTimer();
+}
+
+function stopWorkoutTimer() {
+  if (!workoutTimer.startedAt) return;
+
+  workoutTimer.elapsedMs = getWorkoutTimerElapsedMs();
+  workoutTimer.startedAt = null;
+  window.clearInterval(workoutTimer.intervalId);
+  workoutTimer.intervalId = null;
+  renderWorkoutTimer();
+}
+
+function resetWorkoutTimer() {
+  workoutTimer.elapsedMs = 0;
+  if (workoutTimer.startedAt) {
+    workoutTimer.startedAt = Date.now();
+  }
+  renderWorkoutTimer();
+}
+
+function getWorkoutTimerElapsedMs() {
+  return workoutTimer.elapsedMs + (workoutTimer.startedAt ? Date.now() - workoutTimer.startedAt : 0);
+}
+
+function renderWorkoutTimer() {
+  const elapsed = formatTimerDuration(getWorkoutTimerElapsedMs());
+  controls.timerPill.textContent = elapsed;
+  controls.timerDisplay.textContent = elapsed;
+  controls.timerStart.disabled = Boolean(workoutTimer.startedAt);
+  controls.timerStop.disabled = !workoutTimer.startedAt;
+}
+
+function formatTimerDuration(milliseconds) {
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return [hours, minutes, seconds].map((unit) => String(unit).padStart(2, "0")).join(":");
+  }
+
+  return [minutes, seconds].map((unit) => String(unit).padStart(2, "0")).join(":");
+}
+
 function renderApp() {
   syncExerciseInstructionAssetsToLibrary();
   syncActiveProfile();
@@ -1059,6 +1136,7 @@ function renderApp() {
   renderEquipment();
   renderMemory();
   updateRequestSummary();
+  renderWorkoutTimer();
   renderActiveSession();
   renderDataView();
 }

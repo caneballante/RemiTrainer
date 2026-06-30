@@ -30,6 +30,9 @@ export default async function Home({ searchParams }: HomeProps) {
               <span>
                 Signed in as <strong id="active-profile-name">{selectedName}</strong>
               </span>
+              <button id="open-timer" className="ghost-action timer-open" type="button">
+                Timer <strong id="timer-pill">00:00</strong>
+              </button>
               <form action="/api/logout" method="post">
                 <button className="ghost-action" type="submit">
                   Switch
@@ -278,6 +281,34 @@ export default async function Home({ searchParams }: HomeProps) {
 
       <dialog id="shared-workout-dialog" className="shared-workout-dialog">
         <div id="shared-workout-content"></div>
+      </dialog>
+
+      <dialog id="timer-dialog" className="timer-dialog">
+        <div className="timer-content">
+          <div className="timer-header">
+            <div>
+              <p className="eyebrow">Workout timer</p>
+              <h2>Timer</h2>
+            </div>
+            <button id="close-timer" className="dialog-close inline-close" type="button" aria-label="Close timer">
+              Close
+            </button>
+          </div>
+          <output id="timer-display" className="timer-display" aria-live="polite">
+            00:00
+          </output>
+          <div className="timer-actions">
+            <button id="timer-start" className="primary-action" type="button">
+              Start
+            </button>
+            <button id="timer-stop" className="ghost-action" type="button">
+              Stop
+            </button>
+            <button id="timer-reset" className="ghost-action" type="button">
+              Reset
+            </button>
+          </div>
+        </div>
       </dialog>
 
       <Script src="/remitrainer-app.js" strategy="afterInteractive" />
